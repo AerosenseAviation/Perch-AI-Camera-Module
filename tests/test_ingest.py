@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from debrief.models import FrameIndex, Phases, Transcript
+from debrief.models import FrameIndex, Phases, Probe, Transcript
 from debrief.pipeline import build_context
 from debrief.stages import audio as audio_stage
 from debrief.stages import probe as probe_stage
@@ -53,6 +53,16 @@ def test_probe_rejects_a_missing_file(tmp_path):
 
 
 # --- stage 2 -----------------------------------------------------------------
+
+
+def test_probe_stage_writes_a_single_stream_run(ctx):
+    probe_stage.run(ctx)
+    probe = ctx.read_json("probe.json", Probe)
+    assert len(probe.streams) == 1
+    assert probe.scene.role == "scene"
+    assert probe.panel is None
+    assert probe.has_panel is False
+    assert probe.duration == pytest.approx(probe.scene.duration)
 
 
 def test_telemetry_is_empty_but_valid_without_a_gpmd_stream(ctx):
@@ -143,13 +153,15 @@ def test_sample_writes_timestamped_frames_under_the_cap(ctx):
     assert record.status == "ok"
 
     index = ctx.read_json("frames.json", FrameIndex)
-    assert 0 < index.count <= ctx.config.sample.max_frames
-    assert index.frames[0].t == 0.0
-    assert index.frames[1].t == pytest.approx(index.interval)
+    scene = index.by_role("scene")
+    assert scene is not None
+    assert 0 < scene.count <= ctx.config.sample.max_frames
+    assert scene.frames[0].t == 0.0
+    assert scene.frames[1].t == pytest.approx(scene.interval)
 
-    on_disk = sample_stage.load_frames(ctx.frames_dir)
-    assert [f.file for f in on_disk] == [f.file for f in index.frames]
-    assert all((ctx.frames_dir / f.file).stat().st_size > 0 for f in on_disk)
+    on_disk = sample_stage.load_frames(ctx.frames_dir, "scene")
+    assert [f.file for f in on_disk] == [f.file for f in scene.frames]
+    assert all((ctx.stream_dir("scene") / f.file).stat().st_size > 0 for f in on_disk)
 
 
 @needs_ffmpeg
@@ -159,7 +171,7 @@ def test_sampled_frames_are_scaled_to_the_long_edge(ctx):
 
     probe_stage.run(ctx)
     sample_stage.run(ctx)
-    frame = next(iter(sorted(ctx.frames_dir.glob("f_*.jpg"))))
+    frame = next(iter(sorted(ctx.stream_dir("scene").glob("f_*.jpg"))))
     out = subprocess.run(
         ["ffprobe", "-v", "error", "-show_streams", "-print_format", "json", str(frame)],
         capture_output=True,

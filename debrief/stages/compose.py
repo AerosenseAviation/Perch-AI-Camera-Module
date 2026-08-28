@@ -15,8 +15,9 @@ from ..models import (
     Debrief,
     Modules,
     Observations,
+    PanelAim,
     Phases,
-    ProbeResult,
+    Probe,
     StageRecord,
     Viewpoint,
 )
@@ -77,7 +78,7 @@ def fallback_debrief(modules: Modules, note: str) -> Debrief:
 
 def run(ctx: RunContext) -> StageRecord:
     started = time.time()
-    probe = ctx.read_json("probe.json", ProbeResult)
+    probe = ctx.read_json("probe.json", Probe)
     phases = ctx.read_json("phases.json", Phases)
     modules = ctx.read_json("modules.json", Modules)
     viewpoint = ctx.read_json("viewpoint.json", Viewpoint)
@@ -100,15 +101,24 @@ def run(ctx: RunContext) -> StageRecord:
             detail="no observations",
         )
 
+    panel_aim = ctx.try_read_json("panel_aim.json", PanelAim)
+    rig = viewpoint.rig or f"{viewpoint.mount} mount"
+    sensors = "wide sensor" + (" and instrument sensor" if probe.has_panel else " only")
+
     parts = [
         TextPart(
-            f"Flight: {probe.filename}, {probe.duration:.0f} seconds long.\n"
-            f"Camera mount: {viewpoint.mount}.\n"
+            f"Flight: {probe.scene.filename}, {probe.duration:.0f} seconds long.\n"
+            f"Rig: {rig} — {sensors}.\n"
             f"Lighting: {viewpoint.quality.lighting}."
         ),
         TextPart("Phases of the flight:\n" + phases_summary(phases)),
+        TextPart("Camera rig:\n" + json.dumps(viewpoint.model_dump(), indent=2)),
         TextPart(
-            "Camera viewpoint descriptor:\n" + json.dumps(viewpoint.model_dump(), indent=2)
+            "Instrument sensor check for this flight:\n"
+            + json.dumps(panel_aim.model_dump(), indent=2)
+            if panel_aim is not None
+            else "This rig had no dedicated instrument sensor, so no instrument "
+            "readings were available."
         ),
         TextPart(
             "Analyses this viewpoint blocked, with the reason and the camera tip "

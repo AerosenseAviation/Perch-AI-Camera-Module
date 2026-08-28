@@ -39,13 +39,13 @@ def invoke(*args):
 def test_version():
     result = invoke("--version")
     assert result.exit_code == 0
-    assert "flight-debrief" in result.output
+    assert "flight-debrief-camera" in result.output
 
 
 def test_bare_invocation_shows_help():
     result = invoke()
     assert result.exit_code == 0
-    assert "Turn a flight video into a post-flight debrief." in result.output
+    assert "Turn cockpit camera footage into a post-flight debrief." in result.output
 
 
 @needs_ffmpeg
@@ -175,3 +175,56 @@ def test_eval_rejections_reports_the_validator_rate(clip, config_file, tmp_path)
     result = invoke("eval", "rejections", run_dir)
     assert result.exit_code == 0
     assert "unsupported_number" in result.output
+
+
+# --- the two-sensor rig ------------------------------------------------------
+
+
+@needs_ffmpeg
+def test_probe_reports_the_measured_offset_between_two_files(clip, panel_clip, config_file):
+    result = invoke("probe", clip, "--panel", panel_clip, "--config", config_file)
+    assert result.exit_code == 0, result.output
+    assert "instrument sensor" in result.output
+    assert "offset" in result.output
+
+
+@needs_ffmpeg
+def test_run_accepts_a_panel_stream_and_a_rig(clip, panel_clip, config_file, tmp_path):
+    result = invoke(
+        "run", clip,
+        "--panel", panel_clip,
+        "--panel-offset", "0",
+        "--rig", "cockpit_dual",
+        "--dry-run",
+        "--config", config_file,
+    )
+    assert result.exit_code == 0, result.output
+
+    run_dir = next(iter((tmp_path / "runs").iterdir()))
+    assert (run_dir / "frames" / "scene").is_dir()
+    assert (run_dir / "frames" / "panel").is_dir()
+    assert any((run_dir / "frames" / "panel").glob("f_*.jpg"))
+
+
+@needs_ffmpeg
+def test_run_rejects_an_unknown_rig(clip, config_file):
+    result = invoke("run", clip, "--rig", "nosuchrig", "--config", config_file)
+    assert result.exit_code != 0
+    assert "unknown rig" in result.output
+
+
+@needs_ffmpeg
+def test_batch_pairs_scene_and_panel_files_by_name(clip, panel_clip, config_file, tmp_path):
+    folder = tmp_path / "library"
+    folder.mkdir()
+    (folder / "flight01.mp4").write_bytes(clip.read_bytes())
+    (folder / "flight01-panel.mp4").write_bytes(panel_clip.read_bytes())
+
+    result = invoke("batch", folder, "--dry-run", "--config", config_file)
+    assert result.exit_code == 0, result.output
+    # The panel file is an input, not a flight of its own.
+    assert "1 video(s)" in result.output
+    assert "1 run(s) completed, 0 failed." in result.output
+
+    run_dir = next(iter((tmp_path / "runs").iterdir()))
+    assert any((run_dir / "frames" / "panel").glob("f_*.jpg"))

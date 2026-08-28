@@ -1,7 +1,8 @@
 """The command line.
 
     debrief probe <file>
-    debrief run <file> [--modules a,b] [--no-audio] [--max-cost 0.50] [--dry-run]
+    debrief run <scene> [--panel <file>] [--rig cockpit_dual] [--modules a,b]
+                        [--no-audio] [--max-cost 0.50] [--dry-run]
     debrief batch <folder> [--max-cost-total 20.00]
     debrief stage <name> <run-dir>
     debrief eval export <run-dir> -o grades.csv
@@ -22,13 +23,13 @@ from .cost import CostLimitExceeded, CostTracker
 from .models import RunManifest
 from .modules import MODULE_NAMES
 from .pipeline import build_context, run_pipeline, run_stage
-from .runs import find_videos, load_manifest, resolve_video
+from .runs import find_panel_for, find_videos, load_manifest, resolve_sources
 from .stages import STAGE_ORDER
-from .stages.probe import probe_file
+from .stages.probe import align_audio, probe_file
 
 app = typer.Typer(
     add_completion=False,
-    help="Turn a flight video into a post-flight debrief.",
+    help="Turn cockpit camera footage into a post-flight debrief.",
 )
 eval_app = typer.Typer(add_completion=False, no_args_is_help=True, help="Grading harness.")
 app.add_typer(eval_app, name="eval")
@@ -58,7 +59,7 @@ def main_callback(
     version: bool = typer.Option(False, "--version", help="Print the version and exit."),
 ) -> None:
     if version:
-        typer.echo(f"flight-debrief {__version__}")
+        typer.echo(f"flight-debrief-camera {__version__}")
         raise typer.Exit()
     if ctx.invoked_subcommand is None:
         typer.echo(ctx.get_help())
@@ -71,7 +72,12 @@ def main_callback(
 @app.command()
 def probe(
     file: Path = typer.Argument(..., exists=True, dir_okay=False, help="Video file."),
+    panel: Optional[Path] = typer.Option(
+        None, "--panel", exists=True, dir_okay=False,
+        help="Instrument-sensor file, to report the measured audio offset.",
+    ),
     as_json: bool = typer.Option(False, "--json", help="Print the raw probe.json."),
+    config: Optional[Path] = typer.Option(None, "--config"),
 ) -> None:
     """Inspect a file: duration, resolution, audio, and telemetry track."""
     result = probe_file(file)
@@ -97,13 +103,46 @@ def probe(
         f"  telemetry   {'gpmd stream present' if result.has_telemetry else 'none'}"
     )
 
+    if panel:
+        cfg = _config(config)
+        other = probe_file(panel, role="panel")
+        typer.echo(f"\n{other.filename}  (instrument sensor)")
+        typer.echo(f"  duration    {other.duration:.1f}s")
+        typer.echo(f"  resolution  {other.width}x{other.height} @ {other.fps:.2f} fps")
+        if result.has_audio and other.has_audio:
+            sync = align_audio(file, panel, cfg.sync)
+            typer.echo(
+                f"  offset      {sync.offset:+.2f}s via {sync.method}"
+                + (f" (confidence {sync.confidence:.2f})" if sync.confidence is not None else "")
+            )
+            if sync.note:
+                typer.echo(f"              {sync.note}")
+        else:
+            typer.echo("  offset      cannot be measured — one file has no audio")
+
 
 # --- run ---------------------------------------------------------------------
 
 
 @app.command()
 def run(
-    file: Path = typer.Argument(..., exists=True, dir_okay=False, help="Video file."),
+    file: Path = typer.Argument(
+        ..., exists=True, dir_okay=False, help="Wide (scene) video file."
+    ),
+    panel: Optional[Path] = typer.Option(
+        None, "--panel", exists=True, dir_okay=False,
+        help="Narrow instrument-sensor video for the same flight.",
+    ),
+    panel_offset: Optional[float] = typer.Option(
+        None, "--panel-offset",
+        help="Seconds to add to panel timestamps. Skips audio auto-sync.",
+    ),
+    no_sync: bool = typer.Option(
+        False, "--no-sync", help="Assume both cameras started together."
+    ),
+    rig: Optional[str] = typer.Option(
+        None, "--rig", help="Named rig profile, e.g. cockpit_dual. Skips mount inference."
+    ),
     modules: Optional[str] = typer.Option(
         None, "--modules", help=f"Comma-separated subset of: {', '.join(MODULE_NAMES)}"
     ),
@@ -118,14 +157,22 @@ def run(
 ) -> None:
     """Run the whole pipeline over one video."""
     cfg = _config(config)
-    ctx = run_pipeline(
-        file,
-        cfg,
-        dry_run=dry_run,
-        no_audio=no_audio,
-        modules=_split_modules(modules),
-        max_cost=max_cost,
-    )
+    try:
+        ctx = run_pipeline(
+            file,
+            cfg,
+            panel_video=panel,
+            panel_offset=panel_offset,
+            auto_sync=not no_sync,
+            rig=rig,
+            dry_run=dry_run,
+            no_audio=no_audio,
+            modules=_split_modules(modules),
+            max_cost=max_cost,
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
     _print_summary(ctx.manifest, ctx.tracker, ctx.run_dir)
     if any(s.status == "failed" for s in ctx.manifest.stages):
         raise typer.Exit(code=1)
@@ -155,13 +202,26 @@ def batch(
         None, "--max-cost", help="Per-flight ceiling, in dollars."
     ),
     modules: Optional[str] = typer.Option(None, "--modules", help="Comma-separated subset."),
+    rig: Optional[str] = typer.Option(None, "--rig", help="Named rig profile for every flight."),
+    panel_suffix: str = typer.Option(
+        "-panel",
+        "--panel-suffix",
+        help="Pair each scene file with its instrument file by this filename suffix.",
+    ),
     no_audio: bool = typer.Option(False, "--no-audio"),
     dry_run: bool = typer.Option(False, "--dry-run"),
     config: Optional[Path] = typer.Option(None, "--config"),
 ) -> None:
-    """Run the pipeline over every video in a folder."""
+    """Run the pipeline over every video in a folder.
+
+    Instrument files are paired by filename: ``flight12.mp4`` picks up
+    ``flight12-panel.mp4`` when it sits alongside it.
+    """
     cfg = _config(config)
     videos = find_videos(folder)
+    panels = {v: find_panel_for(v, panel_suffix) for v in videos}
+    # A panel file is an input, never a flight of its own.
+    videos = [v for v in videos if v not in set(p for p in panels.values() if p)]
     if not videos:
         typer.echo(f"No .mp4/.mov/.m4v files under {folder}")
         raise typer.Exit(code=1)
@@ -181,6 +241,8 @@ def batch(
             ctx = run_pipeline(
                 video,
                 cfg,
+                panel_video=panels.get(video),
+                rig=rig,
                 dry_run=dry_run,
                 no_audio=no_audio,
                 modules=_split_modules(modules),
@@ -215,6 +277,7 @@ def stage(
     run_dir: Path = typer.Argument(..., exists=True, file_okay=False, help="An existing run."),
     max_cost: Optional[float] = typer.Option(None, "--max-cost"),
     modules: Optional[str] = typer.Option(None, "--modules"),
+    rig: Optional[str] = typer.Option(None, "--rig"),
     no_audio: bool = typer.Option(False, "--no-audio"),
     config: Optional[Path] = typer.Option(None, "--config"),
 ) -> None:
@@ -223,7 +286,7 @@ def stage(
         raise typer.BadParameter(f"unknown stage {name!r}. Stages: {', '.join(STAGE_ORDER)}")
 
     cfg = _config(config)
-    video = resolve_video(run_dir)
+    video, panel = resolve_sources(run_dir)
     manifest = load_manifest(run_dir) or RunManifest(
         flight_id=run_dir.name, video=str(video), created=""
     )
@@ -231,6 +294,9 @@ def stage(
         video,
         run_dir,
         cfg,
+        panel_video=panel,
+        panel_offset=manifest.panel_offset,
+        rig=rig or manifest.rig,
         no_audio=no_audio,
         modules=_split_modules(modules),
         max_cost=max_cost,

@@ -26,7 +26,7 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
-from ..models import ProbeResult, StageRecord
+from ..models import Probe, StageRecord
 from ..runs import RunContext
 
 NAME = "telemetry"
@@ -203,10 +203,17 @@ def read_csv(path: Path) -> list[dict[str, float]]:
 
 def run(ctx: RunContext) -> StageRecord:
     started = time.time()
-    probe = ctx.read_json("probe.json", ProbeResult)
+    probe = ctx.read_json("probe.json", Probe)
     out = ctx.path("telemetry.csv")
 
-    if not probe.has_telemetry:
+    # Either camera may carry a gpmd track; prefer the scene camera, which sees
+    # the world and so is the one usually worth having GPS from.
+    source = next(
+        (s for s in probe.streams if s.role == "scene" and s.has_telemetry),
+        next((s for s in probe.streams if s.has_telemetry), None),
+    )
+
+    if source is None:
         write_csv(out, [])
         ctx.say("  telemetry: no gpmd stream — continuing without it")
         return StageRecord(
@@ -226,7 +233,14 @@ def run(ctx: RunContext) -> StageRecord:
             detail="exiftool not installed",
         )
 
-    rows = to_series(group_documents(run_exiftool(ctx.video)), probe.duration)
+    rows = to_series(
+        group_documents(run_exiftool(Path(source.path))), source.duration
+    )
+    # Carry the samples onto the run timeline, as the frames are.
+    if source.offset:
+        for row in rows:
+            row["time"] = round(row["time"] + source.offset, 3)
+        rows = [r for r in rows if 0 <= r["time"] <= probe.duration]
     write_csv(out, rows)
     if not rows:
         ctx.say("  telemetry: gpmd stream present but exiftool decoded no samples")

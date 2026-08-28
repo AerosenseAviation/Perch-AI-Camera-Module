@@ -2,6 +2,11 @@
 
 Each stage writes exactly one of these to disk as JSON. A later stage reads the
 file back through the same schema, so a hand-edited artifact still validates.
+
+The rig captures two video streams. The **scene** stream is wide — the cockpit,
+the pilots' hands, and the world through the windscreen. The **panel** stream is
+narrow and framed on the instruments. The scene stream defines the run timeline;
+every panel timestamp is carried into scene time by its offset.
 """
 
 from __future__ import annotations
@@ -12,11 +17,18 @@ from pydantic import BaseModel, Field
 
 # --- controlled vocabularies -------------------------------------------------
 
+StreamRole = Literal["scene", "panel"]
+STREAM_ROLES: tuple[str, ...] = ("scene", "panel")
+
 Mount = Literal["panel", "forward", "chest", "head", "wing", "tail", "unknown"]
 Visibility = Literal["clear", "partial", "none"]
 Lighting = Literal["good", "backlit", "night", "mixed"]
 Vibration = Literal["low", "medium", "high"]
 Obstruction = Literal["none", "partial", "severe"]
+
+InFrame = Literal["full", "partial", "none"]
+Legibility = Literal["clear", "marginal", "illegible"]
+PanelType = Literal["analog", "glass", "mixed", "unknown"]
 
 Phase = Literal[
     "ground",
@@ -62,6 +74,13 @@ class AudioStreamInfo(BaseModel):
 
 
 class ProbeResult(BaseModel):
+    """One video file."""
+
+    role: StreamRole = "scene"
+    offset: float = Field(
+        default=0.0,
+        description="Seconds to add to this file's timestamps to reach scene time.",
+    )
     path: str
     filename: str
     size_bytes: int
@@ -85,21 +104,97 @@ class ProbeResult(BaseModel):
     def display_height(self) -> int:
         return self.width if self.rotation in (90, 270) else self.height
 
+    @property
+    def aspect(self) -> float:
+        h = self.display_height or 1
+        return self.display_width / h
+
+
+class SyncResult(BaseModel):
+    """How the panel stream was aligned to the scene stream."""
+
+    method: Literal["manual", "audio", "assumed"] = "assumed"
+    offset: float = 0.0
+    confidence: Optional[float] = Field(
+        default=None, description="Normalised cross-correlation peak, 0-1, for audio sync."
+    )
+    note: Optional[str] = None
+
+
+class Probe(BaseModel):
+    """Every stream in one run, plus the timeline they share."""
+
+    streams: list[ProbeResult] = Field(default_factory=list)
+    duration: float = 0.0
+    sync: Optional[SyncResult] = None
+
+    def by_role(self, role: str) -> Optional[ProbeResult]:
+        for stream in self.streams:
+            if stream.role == role:
+                return stream
+        return None
+
+    @property
+    def scene(self) -> ProbeResult:
+        stream = self.by_role("scene")
+        if stream is None:
+            raise ValueError("the run has no scene stream")
+        return stream
+
+    @property
+    def panel(self) -> Optional[ProbeResult]:
+        return self.by_role("panel")
+
+    @property
+    def has_panel(self) -> bool:
+        return self.panel is not None
+
+    @property
+    def has_audio(self) -> bool:
+        return any(s.has_audio for s in self.streams)
+
+    @property
+    def has_telemetry(self) -> bool:
+        return any(s.has_telemetry for s in self.streams)
+
+    def audio_stream(self) -> Optional[ProbeResult]:
+        """The stream to transcribe. The scene camera hears the cockpit best."""
+        scene = self.by_role("scene")
+        if scene is not None and scene.has_audio:
+            return scene
+        return next((s for s in self.streams if s.has_audio), None)
+
 
 # --- stage 3: sample ---------------------------------------------------------
 
 
 class FrameRef(BaseModel):
-    t: float = Field(description="Seconds from the start of the video.")
-    file: str = Field(description="Filename inside frames/.")
+    t: float = Field(description="Seconds on the run timeline (scene time).")
+    file: str = Field(description="Filename inside frames/<role>/.")
 
 
-class FrameIndex(BaseModel):
+class StreamFrames(BaseModel):
+    role: StreamRole
     interval: float
     long_edge: int
     jpeg_quality: int
     count: int
+    offset: float = 0.0
     frames: list[FrameRef] = Field(default_factory=list)
+
+
+class FrameIndex(BaseModel):
+    streams: list[StreamFrames] = Field(default_factory=list)
+
+    def by_role(self, role: str) -> Optional[StreamFrames]:
+        for stream in self.streams:
+            if stream.role == role:
+                return stream
+        return None
+
+    @property
+    def total(self) -> int:
+        return sum(s.count for s in self.streams)
 
 
 # --- stage 4: audio ----------------------------------------------------------
@@ -191,6 +286,30 @@ class Viewpoint(BaseModel):
     visible: ViewpointVisible = Field(default_factory=ViewpointVisible)
     quality: ViewpointQuality = Field(default_factory=ViewpointQuality)
     notes: str = ""
+    source: Literal["probed", "profile"] = "probed"
+    rig: Optional[str] = None
+
+
+class PanelAim(BaseModel):
+    """Install QA for the narrow sensor. Drives the aim feedback in the app."""
+
+    in_frame: InFrame = "none"
+    legible: Legibility = "illegible"
+    panel_type: PanelType = "unknown"
+    instruments: list[str] = Field(
+        default_factory=list,
+        description="Instruments the model could name and read, e.g. airspeed, altimeter, tachometer, PFD.",
+    )
+    aim_hint: str = Field(
+        default="",
+        description="One short instruction to the pilot, e.g. 'tilt down slightly'. Empty when the aim is good.",
+    )
+    glare: bool = False
+    notes: str = ""
+
+    @property
+    def usable(self) -> bool:
+        return self.in_frame != "none" and self.legible != "illegible"
 
 
 class ModuleDecision(BaseModel):
@@ -199,8 +318,9 @@ class ModuleDecision(BaseModel):
     reason: str
     tip: Optional[str] = Field(
         default=None,
-        description="Camera-position change that would unlock this module.",
+        description="Camera or rig change that would unlock this module.",
     )
+    streams: list[str] = Field(default_factory=list)
 
 
 class Modules(BaseModel):
@@ -226,6 +346,10 @@ class Observation(BaseModel):
     provenance: Provenance
     confidence: Confidence
     interest: Interest
+    stream: Optional[str] = Field(
+        default=None,
+        description="Which stream the frames came from. Set by the pipeline, not the model.",
+    )
 
 
 class ObservationList(BaseModel):
@@ -291,6 +415,8 @@ class ModelSpend(BaseModel):
 class RunManifest(BaseModel):
     flight_id: str
     video: str
+    panel_video: Optional[str] = None
+    rig: Optional[str] = None
     created: str
     duration: float = 0.0
     dry_run: bool = False
@@ -300,6 +426,8 @@ class RunManifest(BaseModel):
     spend: list[ModelSpend] = Field(default_factory=list)
     stages: list[StageRecord] = Field(default_factory=list)
     mount: Optional[str] = None
+    panel_legible: Optional[str] = None
+    panel_offset: Optional[float] = None
     enabled_modules: list[str] = Field(default_factory=list)
     observation_count: int = 0
     rejection_rate: float = 0.0

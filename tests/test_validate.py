@@ -8,6 +8,7 @@ from debrief.models import Observation
 from debrief.validate import (
     RULE_LOW_CONFIDENCE_SAFETY,
     RULE_NO_TIMESTAMP,
+    RULE_NUMBER_WITHOUT_PANEL_FRAME,
     RULE_TIMESTAMP_OUT_OF_RANGE,
     RULE_UNSUPPORTED_NUMBER,
     ValidationContext,
@@ -33,6 +34,16 @@ def obs(**overrides) -> Observation:
 NO_INSTRUMENTS = ValidationContext(duration=600.0, panel_enabled=False, has_telemetry=False)
 PANEL_READABLE = ValidationContext(duration=600.0, panel_enabled=True, has_telemetry=False)
 WITH_TELEMETRY = ValidationContext(duration=600.0, panel_enabled=False, has_telemetry=True)
+
+# A two-sensor rig: the instruments are readable, and the sensor produced frames
+# every 3 seconds from 90s to 120s and nowhere else.
+PANEL_SENSOR = ValidationContext(
+    duration=600.0,
+    panel_enabled=True,
+    has_telemetry=False,
+    panel_frame_times=tuple(float(t) for t in range(90, 121, 3)),
+    panel_frame_tolerance=5.0,
+)
 
 
 def rules_for(observation, ctx=NO_INSTRUMENTS) -> list[str]:
@@ -158,3 +169,58 @@ def test_one_observation_can_break_several_rules():
         RULE_UNSUPPORTED_NUMBER,
         RULE_LOW_CONFIDENCE_SAFETY,
     }
+
+
+# --- rule 5: a number from a moment the instrument sensor did not cover ------
+
+
+def test_a_number_is_allowed_where_the_instrument_sensor_was_looking():
+    reading = obs(timestamps=[102.0], claim="The airspeed indicator reads 65 knots.")
+    assert rules_for(reading, PANEL_SENSOR) == []
+
+
+def test_a_number_is_rejected_from_a_moment_the_sensor_did_not_cover():
+    # Readable instruments in general, but nothing was captured at t=400.
+    reading = obs(timestamps=[400.0], claim="The airspeed indicator reads 65 knots.")
+    broken = rules_for(reading, PANEL_SENSOR)
+    assert RULE_NUMBER_WITHOUT_PANEL_FRAME in broken
+    assert RULE_UNSUPPORTED_NUMBER not in broken
+
+
+def test_the_tolerance_is_honoured_at_the_edge():
+    just_inside = obs(timestamps=[124.0], claim="The tachometer reads 2300 rpm.")
+    just_outside = obs(timestamps=[130.0], claim="The tachometer reads 2300 rpm.")
+    assert rules_for(just_inside, PANEL_SENSOR) == []
+    assert RULE_NUMBER_WITHOUT_PANEL_FRAME in rules_for(just_outside, PANEL_SENSOR)
+
+
+def test_a_claim_with_no_number_is_untouched_by_the_panel_frame_rule():
+    plain = obs(timestamps=[400.0], claim="The flap lever moves to the first stage.")
+    assert rules_for(plain, PANEL_SENSOR) == []
+
+
+def test_telemetry_exempts_a_number_from_needing_a_panel_frame():
+    """GPS covers the whole flight, so it does not need an instrument frame."""
+    tracked = ValidationContext(
+        duration=600.0,
+        panel_enabled=True,
+        has_telemetry=True,
+        panel_frame_times=PANEL_SENSOR.panel_frame_times,
+    )
+    reading = obs(timestamps=[400.0], claim="Ground speed is 45 metres per second.")
+    assert rules_for(reading, tracked) == []
+
+
+def test_a_single_camera_rig_is_not_subject_to_the_panel_frame_rule():
+    """With no second sensor there are no panel frames to demand."""
+    reading = obs(timestamps=[400.0], claim="The airspeed indicator reads 65 knots.")
+    assert rules_for(reading, PANEL_READABLE) == []
+
+
+def test_panel_coverage_helper():
+    assert PANEL_SENSOR.has_panel_stream is True
+    assert PANEL_SENSOR.panel_covers([100.0]) is True
+    assert PANEL_SENSOR.panel_covers([500.0]) is False
+    # Any one cited timestamp being covered is enough.
+    assert PANEL_SENSOR.panel_covers([500.0, 100.0]) is True
+    assert NO_INSTRUMENTS.has_panel_stream is False

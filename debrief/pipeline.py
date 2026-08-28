@@ -14,7 +14,7 @@ from .cache import ResponseCache
 from .config import Config
 from .cost import CostLimitExceeded, CostTracker, estimate_run
 from .llm import LLMClient
-from .models import ProbeResult, RunManifest, StageRecord
+from .models import Probe, RunManifest, StageRecord
 from .modules import MODULE_NAMES
 from .runs import RunContext, new_run_dir, utcnow
 from .stages import LOCAL_STAGES, STAGE_ORDER, STAGES
@@ -26,6 +26,10 @@ def build_context(
     run_dir: Path,
     cfg: Config,
     *,
+    panel_video: Optional[Path] = None,
+    panel_offset: Optional[float] = None,
+    auto_sync: bool = True,
+    rig: Optional[str] = None,
     dry_run: bool = False,
     no_audio: bool = False,
     modules: Optional[list[str]] = None,
@@ -43,6 +47,10 @@ def build_context(
         llm=llm,
         tracker=tracker,
         cache=cache,
+        panel_video=panel_video,
+        panel_offset=panel_offset,
+        auto_sync=auto_sync,
+        rig=rig,
         dry_run=dry_run,
         no_audio=no_audio,
         module_filter=modules,
@@ -51,17 +59,20 @@ def build_context(
     )
 
 
-def estimate_for(ctx: RunContext, probe: ProbeResult) -> float:
+def estimate_for(ctx: RunContext, probe: Probe) -> float:
     """Predict the run cost from the probe alone, before any frame is cut."""
     cfg = ctx.config
-    interval = sample_stage.choose_interval(
-        probe.duration, cfg.sample.interval_seconds, cfg.sample.max_frames
-    )
-    frame_count = int(probe.duration / interval) + 1 if interval > 0 else 0
+    frame_count = 0
+    for stream in probe.streams:
+        settings = cfg.sample.for_role(stream.role)
+        interval = sample_stage.choose_interval(
+            stream.duration, settings.interval_seconds, settings.max_frames
+        )
+        frame_count += int(stream.duration / interval) + 1 if interval > 0 else 0
 
-    # Assume a middling viewpoint: roughly half the modules, and the phases a
-    # typical flight passes through.
-    module_count = 6 if not ctx.module_filter else len(ctx.module_filter)
+    # Assume a middling rig: roughly half the modules, and the phases a typical
+    # flight passes through. A panel sensor adds panel and crosscheck.
+    module_count = len(ctx.module_filter) if ctx.module_filter else (8 if probe.has_panel else 6)
     estimate = estimate_run(
         cfg,
         frame_count=frame_count,
@@ -77,6 +88,10 @@ def run_pipeline(
     video: Path,
     cfg: Config,
     *,
+    panel_video: Optional[Path] = None,
+    panel_offset: Optional[float] = None,
+    auto_sync: bool = True,
+    rig: Optional[str] = None,
     dry_run: bool = False,
     no_audio: bool = False,
     modules: Optional[list[str]] = None,
@@ -87,6 +102,8 @@ def run_pipeline(
 ) -> RunContext:
     """Run every stage. Returns the context, with the manifest filled in."""
     video = Path(video)
+    # Fail before any work when the rig name is wrong.
+    cfg.rig.profile(rig or cfg.rig.default)
     if modules:
         unknown = set(modules) - set(MODULE_NAMES)
         if unknown:
@@ -101,6 +118,8 @@ def run_pipeline(
     manifest = RunManifest(
         flight_id=run_dir.name,
         video=str(video.resolve()),
+        panel_video=str(Path(panel_video).resolve()) if panel_video else None,
+        rig=rig,
         created=utcnow(),
         dry_run=dry_run,
         max_cost=max_cost,
@@ -109,6 +128,10 @@ def run_pipeline(
         video,
         run_dir,
         cfg,
+        panel_video=Path(panel_video) if panel_video else None,
+        panel_offset=panel_offset,
+        auto_sync=auto_sync,
+        rig=rig,
         dry_run=dry_run,
         no_audio=no_audio,
         modules=modules,
@@ -143,8 +166,10 @@ def run_pipeline(
         manifest.record(record)
 
         if name == "probe":
-            probe = ctx.read_json("probe.json", ProbeResult)
+            probe = ctx.read_json("probe.json", Probe)
             manifest.duration = probe.duration
+            if probe.panel:
+                manifest.panel_offset = probe.panel.offset
             manifest.estimated_cost = round(estimate_for(ctx, probe), 6)
             if not dry_run:
                 ctx.say(f"  estimated model cost: ${manifest.estimated_cost:.4f}")

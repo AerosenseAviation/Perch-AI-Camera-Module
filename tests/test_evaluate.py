@@ -190,3 +190,104 @@ def test_finding_run_directories_fails_clearly(tmp_path):
         evaluate.find_run_dirs(empty)
     with pytest.raises(FileNotFoundError, match="no such directory"):
         evaluate.find_run_dirs(tmp_path / "missing")
+
+
+# --- grading the second sensor ----------------------------------------------
+
+
+def make_dual_run(root: Path, name: str) -> Path:
+    """A run whose observations came from both sensors."""
+    run_dir = root / name
+    run_dir.mkdir(parents=True)
+    (run_dir / "probe.json").write_text("{}")
+    (run_dir / "viewpoint.json").write_text(
+        json.dumps(Viewpoint(mount="panel", source="profile", rig="cockpit_dual").model_dump())
+    )
+    (run_dir / "run.json").write_text(
+        json.dumps(
+            RunManifest(flight_id=name, video=f"{name}.mp4", created="now").model_dump()
+        )
+    )
+    observations = [
+        Observation(
+            module=module,
+            phase="cruise",
+            timestamps=[10.0],
+            claim=claim,
+            provenance="visual",
+            confidence="high",
+            interest="skill",
+            stream=stream,
+        )
+        for module, stream, claim in [
+            ("panel", "panel", "The airspeed indicator reads 95 knots."),
+            ("crosscheck", "both", "Power comes back and the nose drops."),
+            ("environment", "scene", "Low cloud along the far ridge."),
+        ]
+    ]
+    (run_dir / "observations.json").write_text(
+        json.dumps(Observations(observations=observations, accepted=3).model_dump())
+    )
+    return run_dir
+
+
+def _grade(path: Path, verdicts: list[str]) -> None:
+    rows = list(csv.DictReader(path.open()))
+    for row, verdict in zip(rows, verdicts):
+        row["verdict"] = verdict
+    with path.open("w", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=evaluate.COLUMNS)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def test_export_records_the_rig_and_the_stream(tmp_path):
+    root = tmp_path / "runs"
+    make_dual_run(root, "dual-flight")
+    out = tmp_path / "grades.csv"
+    evaluate.export(root, out)
+
+    rows = list(csv.DictReader(out.open()))
+    assert {row["rig"] for row in rows} == {"cockpit_dual"}
+    assert {row["stream"] for row in rows} == {"panel", "both", "scene"}
+
+
+def test_report_breaks_verdicts_down_by_stream(tmp_path):
+    root = tmp_path / "runs"
+    make_dual_run(root, "dual-flight")
+    out = tmp_path / "grades.csv"
+    evaluate.export(root, out)
+    _grade(out, ["useful", "useful", "obvious"])
+
+    text = evaluate.report(out)
+    assert "By stream" in text
+    assert "panel" in text
+
+
+def test_report_calls_out_wrong_instrument_readings(tmp_path):
+    """A wrong number is the failure that loses a pilot, so it gets its own line."""
+    root = tmp_path / "runs"
+    make_dual_run(root, "dual-flight")
+    out = tmp_path / "grades.csv"
+    evaluate.export(root, out)
+    _grade(out, ["wrong", "useful", "useful"])
+
+    text = evaluate.report(out)
+    assert "Instrument reading (panel + crosscheck): 1 wrong of 2 graded" in text
+
+
+def test_no_instrument_line_when_nothing_instrument_based_was_graded(tmp_path):
+    root = tmp_path / "runs"
+    make_run(
+        root,
+        "wing-only",
+        mount="wing",
+        claims=[
+            ("environment", "cruise", "Low sun across the ridge."),
+            ("landing", "landing", "The wing stays level through the flare."),
+        ],
+    )
+    out = tmp_path / "grades.csv"
+    evaluate.export(root, out)
+    _grade(out, ["useful", "useful"])
+    assert "Instrument reading" not in evaluate.report(out)

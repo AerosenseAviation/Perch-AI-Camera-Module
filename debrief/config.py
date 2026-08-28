@@ -1,7 +1,7 @@
 """Configuration loading.
 
-Model names, sampling rates and prices live in TOML, never in code, so a run can
-be re-tuned without a redeploy. Lookup order, first hit wins:
+Model names, sampling rates, rig profiles and prices live in TOML, never in
+code, so a run can be re-tuned without a redeploy. Lookup order, first hit wins:
 
     $DEBRIEF_CONFIG
     ./debrief.toml
@@ -37,11 +37,58 @@ class PathsConfig(BaseModel):
     cache_dir: str = "runs/.cache"
 
 
+class RigProfile(BaseModel):
+    """What a known installation can see, so the mount need not be guessed."""
+
+    description: str = ""
+    mount: str = "unknown"
+    horizon: bool = False
+    runway_on_approach: bool = False
+    pilot_hands: bool = False
+    pilot_face: bool = False
+    wing_or_airframe: bool = False
+    outside_terrain: bool = False
+    other_occupants: bool = False
+
+
+class RigConfig(BaseModel):
+    default: str = "unknown"
+    profiles: dict[str, RigProfile] = Field(default_factory=dict)
+
+    def profile(self, name: Optional[str]) -> Optional[RigProfile]:
+        if not name or name == "unknown":
+            return None
+        if name not in self.profiles:
+            raise ValueError(
+                f"unknown rig {name!r}. Known rigs: {', '.join(sorted(self.profiles)) or 'none'}"
+            )
+        return self.profiles[name]
+
+
+class PanelSampleConfig(BaseModel):
+    interval_seconds: float = 2.0
+    max_frames: int = 500
+    long_edge: int = 1024
+    jpeg_quality: int = 92
+
+
 class SampleConfig(BaseModel):
     interval_seconds: float = 3.0
     max_frames: int = 400
     long_edge: int = 768
     jpeg_quality: int = 80
+    panel: PanelSampleConfig = Field(default_factory=PanelSampleConfig)
+
+    def for_role(self, role: str) -> "SampleConfig | PanelSampleConfig":
+        return self.panel if role == "panel" else self
+
+
+class SyncConfig(BaseModel):
+    enabled: bool = True
+    sample_rate: int = 4000
+    max_offset_seconds: float = 300.0
+    window_seconds: float = 240.0
+    min_confidence: float = 0.4
 
 
 class AudioConfig(BaseModel):
@@ -61,19 +108,29 @@ class SegmentConfig(BaseModel):
 
 class CapabilityConfig(BaseModel):
     frame_count: int = 8
+    panel_frame_count: int = 6
     max_tokens: int = 2000
 
 
 class AnalyseConfig(BaseModel):
     frames_per_batch: int = 20
+    panel_frames_per_batch: int = 24
+    pairs_per_batch: int = 10
     max_tokens: int = 8000
     max_transcript_chars: int = 6000
     telemetry_summary_rows: int = 24
+
+    def batch_for(self, role: str) -> int:
+        return self.panel_frames_per_batch if role == "panel" else self.frames_per_batch
 
 
 class ComposeConfig(BaseModel):
     max_tokens: int = 8000
     max_observations: int = 400
+
+
+class ValidateConfig(BaseModel):
+    panel_frame_tolerance: float = 5.0
 
 
 class Price(BaseModel):
@@ -84,14 +141,19 @@ class Price(BaseModel):
 class Config(BaseModel):
     models: ModelsConfig = Field(default_factory=ModelsConfig)
     paths: PathsConfig = Field(default_factory=PathsConfig)
+    rig: RigConfig = Field(default_factory=RigConfig)
     sample: SampleConfig = Field(default_factory=SampleConfig)
+    sync: SyncConfig = Field(default_factory=SyncConfig)
     audio: AudioConfig = Field(default_factory=AudioConfig)
     segment: SegmentConfig = Field(default_factory=SegmentConfig)
     capability: CapabilityConfig = Field(default_factory=CapabilityConfig)
     analyse: AnalyseConfig = Field(default_factory=AnalyseConfig)
     compose: ComposeConfig = Field(default_factory=ComposeConfig)
+    validate_: ValidateConfig = Field(default_factory=ValidateConfig, alias="validate")
     pricing: dict[str, Price] = Field(default_factory=dict)
     source: Optional[str] = None
+
+    model_config = {"populate_by_name": True}
 
     def price(self, model: str) -> Price:
         if model in self.pricing:

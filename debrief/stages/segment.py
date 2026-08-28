@@ -18,7 +18,7 @@ from ..models import (
     FrameRef,
     Phases,
     PhaseSpan,
-    ProbeResult,
+    Probe,
     StageRecord,
 )
 from ..runs import RunContext
@@ -268,7 +268,12 @@ def phases_from_vision(ctx: RunContext, frames: list[FrameRef], duration: float)
         ]
         for ref in batch:
             parts.append(TextPart(f"Frame at t={ref.t:.1f}s:"))
-            parts.append(ImagePart(ctx.frames_dir / ref.file, width=ctx.config.sample.long_edge))
+            parts.append(
+                ImagePart(
+                    ctx.stream_dir("scene") / ref.file,
+                    width=ctx.config.sample.long_edge,
+                )
+            )
         parts.append(
             TextPart(
                 "Return one label per frame, echoing each timestamp exactly as given."
@@ -332,9 +337,10 @@ def _fallback(duration: float, note: str) -> Phases:
 
 def run(ctx: RunContext) -> StageRecord:
     started = time.time()
-    probe = ctx.read_json("probe.json", ProbeResult)
+    probe = ctx.read_json("probe.json", Probe)
     rows = telemetry_stage.read_csv(ctx.path("telemetry.csv"))
-    frames = sample_stage.load_frames(ctx.frames_dir)
+    # Phases come from the wide view: the panel sensor cannot see the ground.
+    frames = sample_stage.load_frames(ctx.frames_dir, "scene")
 
     usable = [r for r in rows if "ground_speed" in r or "altitude" in r]
     if len(usable) >= 10:

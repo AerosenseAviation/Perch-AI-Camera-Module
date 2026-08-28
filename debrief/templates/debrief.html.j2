@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Debrief — {{ probe.filename }}</title>
+<title>Debrief — {{ scene.filename }}</title>
 <style>
   :root {
     --bg: #f6f5f2;
@@ -91,6 +91,15 @@
   .tag.character { color: var(--character); }
   .tag.trivia { color: var(--trivia); }
   details summary { cursor: pointer; color: var(--muted); font-size: .9rem; }
+  .notice {
+    background: var(--panel); border: 1px solid var(--line);
+    border-left: 3px solid var(--warn); border-radius: 8px;
+    padding: .8rem 1.1rem; margin-top: 1.5rem; font-size: .92rem;
+  }
+  img.thumb {
+    margin-top: .35rem; width: 160px; max-width: 100%; height: auto;
+    border-radius: 4px; border: 1px solid var(--line);
+  }
   footer {
     margin-top: 3.5rem; padding-top: 1.25rem; border-top: 1px solid var(--line);
     color: var(--muted); font-size: .84rem;
@@ -102,15 +111,23 @@
 <div class="wrap">
 
 <header>
-  <h1>{{ probe.filename }}</h1>
+  <h1>{{ scene.filename }}</h1>
   <p class="meta">
     <span>{{ duration_clock }}</span>
-    <span>{{ probe.width }}&times;{{ probe.height }}</span>
-    <span>{{ viewpoint.mount }} mount</span>
+    <span>{{ scene.width }}&times;{{ scene.height }}</span>
+    <span>{% if viewpoint.rig %}{{ viewpoint.rig }}{% else %}{{ viewpoint.mount }} mount{% endif %}</span>
+    {% if has_panel %}<span>instrument sensor</span>{% endif %}
     <span>{{ viewpoint.quality.lighting }} light</span>
     {% if phase_list %}<span>{{ phase_list }}</span>{% endif %}
   </p>
 </header>
+
+{% if panel_aim and panel_aim.legible != 'clear' %}
+<div class="notice">
+  <strong>Instrument sensor:</strong> {{ panel_aim.in_frame }} in frame, {{ panel_aim.legible }}.
+  {% if panel_aim.aim_hint %}Before the next flight: {{ panel_aim.aim_hint }}{% endif %}
+</div>
+{% endif %}
 
 <h2>Flight story</h2>
 <p class="story">{{ debrief.flight_story }}</p>
@@ -164,7 +181,10 @@
           <td>{{ o.module }}</td>
           <td>{{ o.phase }}</td>
           <td>{{ o.claim }}</td>
-          <td>{{ o.provenance }} / {{ o.confidence }}</td>
+          <td>
+            {{ o.provenance }} / {{ o.confidence }}
+            {% if o.panel_image %}<br><img class="thumb" src="{{ o.panel_image }}" alt="Instruments at {{ o.clock }}">{% endif %}
+          </td>
           <td><span class="tag {{ o.interest }}">{{ o.interest }}</span></td>
         </tr>
       {% endfor %}
@@ -176,7 +196,8 @@
 
 <footer>
   <p>
-    Built from {{ frame_count }} sampled frames{% if has_telemetry %}, GPS telemetry{% endif %}{% if has_transcript %} and a cockpit audio transcript{% endif %}.
+    Built from {{ frame_count }} sampled frames{% if panel_frame_count %} ({{ panel_frame_count }} from the instrument sensor){% endif %}{% if has_telemetry %}, GPS telemetry{% endif %}{% if has_transcript %} and a cockpit audio transcript{% endif %}.
+    {% if sync and has_panel %}Streams aligned by {{ sync.method }}{% if sync.confidence %} (confidence {{ '%.2f'|format(sync.confidence) }}){% endif %}.{% endif %}
     Modules run: {{ enabled_modules }}.
     {% if rejected_count %}The validator discarded {{ rejected_count }} proposed observations.{% endif %}
   </p>

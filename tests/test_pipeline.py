@@ -15,8 +15,9 @@ from debrief.models import (
     Debrief,
     FrameLabels,
     Modules,
-    Observations,
     ObservationList,
+    Observations,
+    PanelAim,
     Phases,
     Rejections,
     RunManifest,
@@ -52,6 +53,11 @@ PANEL_CAM = {**WING_CAM, "mount": "panel"}
 PANEL_CAM["visible"] = {**WING_CAM["visible"], "instrument_panel": "clear"}
 
 
+# Frames are labelled "Frame at t=…s", "Instrument sensor at t=…s", or paired
+# under "--- t=…s ---", so the stub reads the timestamp rather than the label.
+TIMESTAMP = re.compile(r"t=(-?[\d.]+)s")
+
+
 def phase_for(t: float) -> str:
     if t < 6:
         return "ground"
@@ -62,18 +68,42 @@ def phase_for(t: float) -> str:
     return "approach"
 
 
-def make_stub(*, viewpoint: dict, claims: list[dict]):
+READABLE_PANEL = {
+    "in_frame": "full",
+    "legible": "clear",
+    "panel_type": "analog",
+    "instruments": ["airspeed", "altimeter", "tachometer"],
+    "aim_hint": "",
+    "glare": False,
+    "notes": "Squarely framed on the six-pack.",
+}
+
+ILLEGIBLE_PANEL = {
+    "in_frame": "partial",
+    "legible": "illegible",
+    "panel_type": "unknown",
+    "instruments": [],
+    "aim_hint": "tilt down — the sensor is looking at the glareshield",
+    "glare": True,
+    "notes": "",
+}
+
+
+def make_stub(*, viewpoint: dict, claims: list[dict], panel_aim: dict | None = None):
     """A stub that answers every schema the pipeline asks for."""
 
     def stub(*, model, system, parts, schema, **_):
         if schema is Viewpoint:
             return viewpoint
 
+        if schema is PanelAim:
+            return panel_aim or READABLE_PANEL
+
         if schema is FrameLabels:
             stamps = [
                 float(m)
                 for part in parts
-                for m in re.findall(r"Frame at t=([\d.]+)s", getattr(part, "text", "") or "")
+                for m in re.findall(TIMESTAMP, getattr(part, "text", "") or "")
             ]
             return {"labels": [{"t": t, "phase": phase_for(t)} for t in stamps]}
 
@@ -81,7 +111,7 @@ def make_stub(*, viewpoint: dict, claims: list[dict]):
             text = "\n".join(getattr(p, "text", "") or "" for p in parts)
             module = re.search(r"Module: (\w+)", text).group(1)
             phase = re.search(r"Phase: (\w+)", text).group(1)
-            stamps = [float(m) for m in re.findall(r"Frame at t=([\d.]+)s", text)]
+            stamps = [float(m) for m in re.findall(TIMESTAMP, text)]
             if not stamps:
                 return {"observations": []}
             return {
@@ -198,7 +228,7 @@ def test_every_stage_writes_its_artifact(wing_run):
         "run.json",
     ):
         assert wing_run.path(name).is_file(), f"{name} is missing"
-    assert any(wing_run.frames_dir.glob("f_*.jpg"))
+    assert any(wing_run.stream_dir("scene").glob("f_*.jpg"))
 
 
 @needs_ffmpeg
@@ -305,3 +335,131 @@ def test_a_cost_ceiling_stops_the_run(clip, cfg, monkeypatch):
 def test_an_unknown_module_name_is_rejected_before_any_work(clip, cfg):
     with pytest.raises(ValueError, match="unknown module"):
         run_pipeline(clip, cfg, modules=["nosuch"], verbose=False)
+
+
+# --- the two-sensor rig, end to end -----------------------------------------
+
+
+PANEL_RIG = {
+    "mount": "panel",
+    "visible": {
+        "instrument_panel": "none",
+        "horizon": True,
+        "runway_on_approach": True,
+        "pilot_hands": True,
+        "pilot_face": False,
+        "wing_or_airframe": False,
+        "outside_terrain": True,
+        "other_occupants": False,
+    },
+    "quality": {
+        "lighting": "good",
+        "glare": False,
+        "vibration": "low",
+        "obstruction": "none",
+    },
+    "notes": "Fixed above the panel, looking forward.",
+}
+
+
+@pytest.fixture
+def dual_run(clip, panel_clip, cfg):
+    set_stub(
+        make_stub(
+            viewpoint=PANEL_RIG,
+            claims=[
+                {"claim": "The airspeed indicator reads 75 knots and holds there."},
+                {"claim": "The flap lever moves to the first stage."},
+            ],
+        )
+    )
+    return run_pipeline(
+        clip, cfg, panel_video=panel_clip, panel_offset=0.0, rig="cockpit_dual", verbose=False
+    )
+
+
+@needs_ffmpeg
+def test_a_named_rig_skips_mount_inference(dual_run):
+    viewpoint = dual_run.read_json("viewpoint.json", Viewpoint)
+    assert viewpoint.source == "profile"
+    assert viewpoint.rig == "cockpit_dual"
+    assert viewpoint.mount == "panel"
+
+
+@needs_ffmpeg
+def test_the_instrument_sensor_unlocks_numbers(dual_run):
+    modules = dual_run.read_json("modules.json", Modules)
+    observations = dual_run.read_json("observations.json", Observations)
+
+    assert "panel" in modules.enabled
+    assert "crosscheck" in modules.enabled
+    # The number survives, because the sensor covered the moment it cites.
+    assert any("75 knots" in o.claim for o in observations.observations)
+
+
+@needs_ffmpeg
+def test_the_aim_check_is_written_and_recorded(dual_run):
+    aim = dual_run.read_json("panel_aim.json", PanelAim)
+    assert aim.usable
+    assert "airspeed" in aim.instruments
+
+    manifest = dual_run.read_json("run.json", RunManifest)
+    assert manifest.rig == "cockpit_dual"
+    assert manifest.panel_legible == "clear"
+    assert manifest.panel_video is not None
+
+
+@needs_ffmpeg
+def test_observations_record_which_sensor_they_came_from(dual_run):
+    observations = dual_run.read_json("observations.json", Observations)
+    streams = {o.stream for o in observations.observations}
+    assert streams <= {"scene", "panel", "both"}
+    panel_rows = [o for o in observations.observations if o.module == "panel"]
+    assert panel_rows and all(o.stream == "panel" for o in panel_rows)
+    cross = [o for o in observations.observations if o.module == "crosscheck"]
+    assert cross and all(o.stream == "both" for o in cross)
+
+
+@needs_ffmpeg
+def test_an_illegible_panel_blocks_numbers_even_with_two_sensors(clip, panel_clip, cfg):
+    """The second sensor is only worth something if it can actually be read."""
+    set_stub(
+        make_stub(
+            viewpoint=PANEL_RIG,
+            panel_aim=ILLEGIBLE_PANEL,
+            claims=[{"claim": "The airspeed indicator reads 75 knots."}],
+        )
+    )
+    ctx = run_pipeline(
+        clip, cfg, panel_video=panel_clip, panel_offset=0.0, rig="cockpit_dual", verbose=False
+    )
+
+    modules = ctx.read_json("modules.json", Modules)
+    observations = ctx.read_json("observations.json", Observations)
+
+    assert "panel" in modules.disabled
+    assert "crosscheck" in modules.disabled
+    for obs in observations.observations:
+        assert mentions_measured_quantity(obs.claim) is None
+
+
+@needs_ffmpeg
+def test_the_aim_hint_reaches_the_rendered_page(clip, panel_clip, cfg):
+    set_stub(
+        make_stub(
+            viewpoint=PANEL_RIG,
+            panel_aim=ILLEGIBLE_PANEL,
+            claims=[{"claim": "The wing stays level."}],
+        )
+    )
+    ctx = run_pipeline(
+        clip, cfg, panel_video=panel_clip, panel_offset=0.0, rig="cockpit_dual", verbose=False
+    )
+    html = ctx.path("debrief.html").read_text()
+    assert "tilt down" in html, "the pilot must be told how to fix the aim"
+
+
+@needs_ffmpeg
+def test_an_unknown_rig_name_fails_before_any_work(clip, cfg):
+    with pytest.raises(ValueError, match="unknown rig"):
+        run_pipeline(clip, cfg, rig="nosuchrig", verbose=False)

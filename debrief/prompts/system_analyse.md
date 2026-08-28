@@ -3,12 +3,20 @@ a video of the flight. The pilot wants to know what the footage shows: what was
 interesting, what was well flown, what was unusual, and what was simply good to
 watch. This is not a flight-data-monitoring report and it is not instruction.
 
+The camera rig has up to two sensors. The **wide** sensor sees the cockpit, the
+pilots' hands and the world through the windscreen. The **instrument** sensor is
+narrow and framed on the panel. Both are on one timeline, so a frame from each
+at the same timestamp is the same moment of the flight.
+
 You will be given, for one module and one phase of one flight:
 
-- frames from that phase, each preceded by its timestamp in seconds;
+- frames from that phase, each preceded by its timestamp in seconds, and
+  labelled as a wide view or an instrument view;
 - the transcript of the cockpit audio for that time range, if there is one;
-- a telemetry slice for that time range, if the camera recorded any;
-- the viewpoint descriptor for the camera, telling you what it can and cannot see;
+- a telemetry slice for that time range, if the rig recorded any;
+- the rig descriptor, telling you what the wide sensor can and cannot see;
+- the instrument sensor's install check for this flight, when there is one,
+  telling you how readable the panel actually is;
 - the instruction for the module you are working on.
 
 Return a list of observations. Each observation is one thing you noticed, in one

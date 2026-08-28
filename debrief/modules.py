@@ -1,11 +1,15 @@
 """The module table.
 
 A module is a question the tool can ask of the footage. It is enabled only when
-the viewpoint supports the question, which is what stops the pipeline from
-inventing panel readings on a wing-cam flight.
+the rig supports the question, which is what stops the pipeline from inventing
+panel readings the camera never resolved.
+
+Each module also declares which stream it reads. `panel` reads the narrow
+sensor. `environment` reads the wide one. `crosscheck` reads both, paired in
+time, and is the module that only exists because there are two.
 
 Each entry carries a human reason for both answers, which becomes the "What I
-could not see" section, and a camera tip that becomes "Next time".
+could not see" section, and a tip that becomes "Next time".
 """
 
 from __future__ import annotations
@@ -13,7 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, Optional
 
-from .models import ModuleDecision, Modules, Viewpoint
+from .models import ModuleDecision, Modules, PanelAim, Viewpoint
 
 # A mount whose lens points along the flight path can see the runway on final.
 FORWARD_MOUNTS = frozenset({"panel", "forward", "chest", "head", "wing", "unknown"})
@@ -24,32 +28,49 @@ ALL_PHASES = ("ground", "taxi") + AIRBORNE + ("shutdown",)
 
 
 @dataclass(frozen=True)
+class RigContext:
+    """Everything outside the wide view that gates a module."""
+
+    has_audio: bool = False
+    has_transcript: bool = False
+    has_telemetry: bool = False
+    has_panel_stream: bool = False
+    panel: Optional[PanelAim] = None
+
+    @property
+    def panel_readable(self) -> bool:
+        """True when instruments can actually be read this flight.
+
+        Either the narrow sensor is aimed and legible, or — on a single-camera
+        rig — the wide view happens to resolve the panel.
+        """
+        return bool(self.panel and self.panel.usable)
+
+
+# Kept as an alias so existing callers and tests keep working after the rename.
+ViewpointContext = RigContext
+
+
+@dataclass(frozen=True)
 class ModuleSpec:
     name: str
     requires: str
     reports: str
     tip: str
     phases: tuple[str, ...]
-    test: Callable[[Viewpoint, "ViewpointContext"], bool]
+    test: Callable[[Viewpoint, RigContext], bool]
+    streams: tuple[str, ...] = ("scene",)
 
 
-@dataclass(frozen=True)
-class ViewpointContext:
-    """Everything outside the viewpoint that gates a module.
-
-    "Audio present" in the specification's table splits in two here. `engine`
-    reads the waveform and needs only an audio track. `radio` and `callouts`
-    read words and need a transcript as well — enabling them without one buys
-    a round of calls that can only come back empty.
-    """
-
-    has_audio: bool = False
-    has_transcript: bool = False
-    has_telemetry: bool = False
-
-
-def _always(_vp: Viewpoint, _ctx: ViewpointContext) -> bool:
+def _always(_vp: Viewpoint, _ctx: RigContext) -> bool:
     return True
+
+
+def _panel_readable(vp: Viewpoint, ctx: RigContext) -> bool:
+    if ctx.has_panel_stream:
+        return ctx.panel_readable
+    # Single-camera fallback: the wide view must resolve the instruments itself.
+    return vp.visible.instrument_panel == "clear"
 
 
 MODULE_SPECS: tuple[ModuleSpec, ...] = (
@@ -57,7 +78,7 @@ MODULE_SPECS: tuple[ModuleSpec, ...] = (
         name="attitude",
         requires="horizon visible",
         reports="pitch and bank changes, steepest bank, wings-level quality",
-        tip="Aim the camera so the horizon stays in frame through the turns.",
+        tip="Aim the wide sensor so the horizon stays in frame through the turns.",
         phases=AIRBORNE,
         test=lambda vp, _c: vp.visible.horizon,
     ),
@@ -65,7 +86,7 @@ MODULE_SPECS: tuple[ModuleSpec, ...] = (
         name="pattern",
         requires="outside terrain or telemetry",
         reports="circuit shape, leg lengths, turn consistency",
-        tip="A camera with a view of the ground, or a GoPro with GPS on, gives the circuit shape.",
+        tip="Give the wide sensor a view of the ground, or record GPS telemetry.",
         phases=("circuit", "approach", "manoeuvre", "cruise", "takeoff", "landing"),
         test=lambda vp, c: vp.visible.outside_terrain or c.has_telemetry,
     ),
@@ -73,23 +94,33 @@ MODULE_SPECS: tuple[ModuleSpec, ...] = (
         name="landing",
         requires="forward view and runway visible",
         reports="flare, float, drift, bounce, touchdown character",
-        tip="Point the camera forward down the nose so the runway fills the frame on final.",
+        tip="Point the wide sensor forward down the nose so the runway fills the frame on final.",
         phases=("approach", "landing"),
         test=lambda vp, _c: vp.visible.runway_on_approach and vp.mount in FORWARD_MOUNTS,
     ),
     ModuleSpec(
         name="panel",
-        requires="instrument panel clear",
+        requires="instruments in frame and legible",
         reports="readings, configuration changes, warning lights",
-        tip="Move the camera back or up so the whole panel is legible, not just the top of it.",
+        tip="Aim the narrow sensor squarely at the instrument panel and check it in the app before you fly.",
         phases=ALL_PHASES,
-        test=lambda vp, _c: vp.visible.instrument_panel == "clear",
+        test=_panel_readable,
+        streams=("panel",),
+    ),
+    ModuleSpec(
+        name="crosscheck",
+        requires="both streams, with legible instruments",
+        reports="what the instruments said against what the aircraft and the world were doing",
+        tip="A second sensor framed on the panel is what makes this possible at all.",
+        phases=AIRBORNE,
+        test=lambda vp, c: c.has_panel_stream and c.panel_readable,
+        streams=("scene", "panel"),
     ),
     ModuleSpec(
         name="hands",
         requires="pilot hands visible",
         reports="control inputs, throttle, flap and gear selections",
-        tip="A camera over the shoulder catches the hands on the throttle and the flap lever.",
+        tip="Mount the wide sensor high enough to catch the hands on the throttle and the flap lever.",
         phases=ALL_PHASES,
         test=lambda vp, _c: vp.visible.pilot_hands,
     ),
@@ -97,7 +128,7 @@ MODULE_SPECS: tuple[ModuleSpec, ...] = (
         name="scan",
         requires="pilot face visible",
         reports="lookout pattern, head movement, instrument dwell",
-        tip="A camera facing back at the pilot shows where the eyes and head go.",
+        tip="A sensor facing back at the pilot shows where the eyes and head go.",
         phases=AIRBORNE,
         test=lambda vp, _c: vp.visible.pilot_face,
     ),
@@ -129,7 +160,7 @@ MODULE_SPECS: tuple[ModuleSpec, ...] = (
         name="environment",
         requires="outside terrain visible",
         reports="weather, cloud, light, terrain, visible traffic",
-        tip="Give the camera a clear view out of the aircraft, not just the cabin.",
+        tip="Give the wide sensor a clear view out of the aircraft, not just the cabin.",
         phases=("climb", "cruise", "manoeuvre", "circuit", "approach", "takeoff", "landing"),
         test=lambda vp, _c: vp.visible.outside_terrain,
     ),
@@ -154,12 +185,29 @@ MODULE_SPECS: tuple[ModuleSpec, ...] = (
 MODULE_NAMES: tuple[str, ...] = tuple(spec.name for spec in MODULE_SPECS)
 BY_NAME: dict[str, ModuleSpec] = {spec.name: spec for spec in MODULE_SPECS}
 
-# Modules whose output would carry a number the footage cannot support unless
-# the panel is readable. The validator uses this set.
-NUMERIC_SOURCES = frozenset({"panel"})
+# Modules whose observations are allowed to carry an instrument reading.
+NUMERIC_SOURCES = frozenset({"panel", "crosscheck"})
 
 
-def _reason(spec: ModuleSpec, viewpoint: Viewpoint, ctx: ViewpointContext, enabled: bool) -> str:
+def _panel_reason(ctx: RigContext, viewpoint: Viewpoint) -> str:
+    if not ctx.has_panel_stream:
+        state = viewpoint.visible.instrument_panel
+        return (
+            f"there is no instrument sensor on this rig and the wide view shows the panel "
+            f"as {state}, not clear"
+        )
+    aim = ctx.panel
+    if aim is None:
+        return "the instrument sensor was never checked"
+    if aim.in_frame == "none":
+        return "the instrument sensor is not pointing at the panel"
+    if aim.legible == "illegible":
+        reason = "the instruments are in frame but cannot be read"
+        return reason + (" — glare on the glass" if aim.glare else "")
+    return "the instrument sensor is aimed but the reading was not usable"
+
+
+def _reason(spec: ModuleSpec, viewpoint: Viewpoint, ctx: RigContext, enabled: bool) -> str:
     if enabled:
         return f"{spec.requires} — enabled"
     if spec.name in ("radio", "callouts"):
@@ -169,8 +217,11 @@ def _reason(spec: ModuleSpec, viewpoint: Viewpoint, ctx: ViewpointContext, enabl
     if spec.name == "engine":
         return "the file has no audio track"
     if spec.name == "panel":
-        state = viewpoint.visible.instrument_panel
-        return f"the instrument panel is {state} in this viewpoint, not clear"
+        return _panel_reason(ctx, viewpoint)
+    if spec.name == "crosscheck":
+        if not ctx.has_panel_stream:
+            return "this rig has only one sensor, so there is nothing to cross-reference"
+        return _panel_reason(ctx, viewpoint)
     if spec.name == "landing":
         if not viewpoint.visible.runway_on_approach:
             return "the runway is not in frame on approach"
@@ -190,14 +241,14 @@ def _reason(spec: ModuleSpec, viewpoint: Viewpoint, ctx: ViewpointContext, enabl
 
 def decide(
     viewpoint: Viewpoint,
-    ctx: ViewpointContext,
+    ctx: RigContext,
     *,
     only: Optional[list[str]] = None,
 ) -> Modules:
-    """Map a viewpoint to the modules it supports.
+    """Map a rig and its install check to the modules it supports.
 
     ``only`` restricts the result to a user-requested subset (``--modules``). It
-    can never enable a module the viewpoint does not support.
+    can never enable a module the rig does not support.
     """
     requested = {m.strip() for m in only} if only else None
     if requested:
@@ -216,13 +267,14 @@ def decide(
         if requested is not None and spec.name not in requested:
             enabled = False
             if supported:
-                reason = "supported by this viewpoint but not selected with --modules"
+                reason = "supported by this rig but not selected with --modules"
         decisions.append(
             ModuleDecision(
                 module=spec.name,
                 enabled=enabled,
                 reason=reason,
                 tip=spec.tip or None,
+                streams=list(spec.streams),
             )
         )
 
@@ -239,3 +291,8 @@ def phases_for(module: str, present: list[str]) -> list[str]:
     if not spec:
         return []
     return [p for p in spec.phases if p in present]
+
+
+def streams_for(module: str) -> tuple[str, ...]:
+    spec = BY_NAME.get(module)
+    return spec.streams if spec else ("scene",)

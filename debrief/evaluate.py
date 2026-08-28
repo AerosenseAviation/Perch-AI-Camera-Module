@@ -19,7 +19,9 @@ VERDICTS = ("useful", "obvious", "wrong")
 
 COLUMNS = [
     "flight_id",
+    "rig",
     "mount",
+    "stream",
     "phase",
     "module",
     "provenance",
@@ -62,6 +64,7 @@ class RunRows:
     flight_id: str
     mount: str
     rows: list[dict[str, str]]
+    rig: str = "unknown"
 
 
 def rows_for_run(run_dir: Path) -> RunRows:
@@ -72,10 +75,11 @@ def rows_for_run(run_dir: Path) -> RunRows:
 
     observations = Observations.model_validate(json.loads(obs_path.read_text()))
 
-    mount = "unknown"
+    mount, rig = "unknown", "unknown"
     vp_path = run_dir / "viewpoint.json"
     if vp_path.is_file():
-        mount = Viewpoint.model_validate(json.loads(vp_path.read_text())).mount
+        viewpoint = Viewpoint.model_validate(json.loads(vp_path.read_text()))
+        mount, rig = viewpoint.mount, viewpoint.rig or "unknown"
 
     flight_id = run_dir.name
     manifest_path = run_dir / "run.json"
@@ -89,7 +93,9 @@ def rows_for_run(run_dir: Path) -> RunRows:
         rows.append(
             {
                 "flight_id": flight_id,
+                "rig": rig,
                 "mount": mount,
+                "stream": obs.stream or "scene",
                 "phase": obs.phase,
                 "module": obs.module,
                 "provenance": obs.provenance,
@@ -102,7 +108,7 @@ def rows_for_run(run_dir: Path) -> RunRows:
                 "notes": "",
             }
         )
-    return RunRows(flight_id=flight_id, mount=mount, rows=rows)
+    return RunRows(flight_id=flight_id, mount=mount, rows=rows, rig=rig)
 
 
 def export(target: Path, out: Path) -> tuple[int, int]:
@@ -153,6 +159,7 @@ def report(grades_csv: Path) -> str:
     by_mount: dict[str, Counter] = defaultdict(Counter)
     by_module: dict[str, Counter] = defaultdict(Counter)
     by_phase: dict[str, Counter] = defaultdict(Counter)
+    by_stream: dict[str, Counter] = defaultdict(Counter)
     by_flight: set[str] = set()
 
     for row in rows:
@@ -168,6 +175,7 @@ def report(grades_csv: Path) -> str:
         by_mount[row.get("mount") or "unknown"][verdict] += 1
         by_module[row.get("module") or "unknown"][verdict] += 1
         by_phase[row.get("phase") or "unknown"][verdict] += 1
+        by_stream[row.get("stream") or "scene"][verdict] += 1
 
     graded = sum(overall.values())
     lines = [
@@ -186,11 +194,26 @@ def report(grades_csv: Path) -> str:
     lines += _table("By mount", by_mount, "mount")
     lines += _table("By module", by_module, "module")
     lines += _table("By phase", by_phase, "phase")
+    lines += _table("By stream", by_stream, "stream")
 
     if graded:
         lines.append(
             f"\nUseful rate is the go/no-go number: {_pct(overall['useful'], graded).strip()} overall."
         )
+        # Instrument reading is the bet the second sensor makes. A wrong number
+        # costs far more than a missed observation, so it gets its own line.
+        panel = Counter()
+        for row in rows:
+            verdict = (row.get("verdict") or "").strip().lower()
+            if verdict in VERDICTS and (row.get("module") in ("panel", "crosscheck")):
+                panel[verdict] += 1
+        panel_graded = sum(panel.values())
+        if panel_graded:
+            lines.append(
+                f"Instrument reading (panel + crosscheck): {panel['wrong']} wrong of "
+                f"{panel_graded} graded ({_pct(panel['wrong'], panel_graded).strip()}). "
+                "A wrong number is the one failure that loses a pilot for good."
+            )
     return "\n".join(lines)
 
 

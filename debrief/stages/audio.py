@@ -22,7 +22,7 @@ from pathlib import Path
 
 import numpy as np
 
-from ..models import ProbeResult, StageRecord, Transcript, TranscriptSegment
+from ..models import Probe, StageRecord, Transcript, TranscriptSegment
 from ..runs import RunContext, require_binary
 
 NAME = "audio"
@@ -142,8 +142,9 @@ def segments_between(
 
 def run(ctx: RunContext) -> StageRecord:
     started = time.time()
-    probe = ctx.read_json("probe.json", ProbeResult)
+    probe = ctx.read_json("probe.json", Probe)
     cfg = ctx.config.audio
+    source = probe.audio_stream()
 
     def finish(status: str, detail: str, transcript: Transcript) -> StageRecord:
         ctx.write_json("transcript.json", transcript)
@@ -158,13 +159,13 @@ def run(ctx: RunContext) -> StageRecord:
         ctx.say("  audio: skipped by request")
         return finish("skipped", "disabled", Transcript(available=False, note="audio disabled"))
 
-    if not probe.has_audio:
+    if source is None:
         write_features(features_path, [])
-        ctx.say("  audio: the file has no audio stream")
+        ctx.say("  audio: no stream has an audio track")
         return finish("skipped", "no audio stream", Transcript(available=False, note="no audio stream"))
 
     wav = ctx.path("audio.wav")
-    if not extract_wav(ctx.video, wav, cfg.sample_rate):
+    if not extract_wav(Path(source.path), wav, cfg.sample_rate):
         write_features(features_path, [])
         ctx.say("  audio: could not extract a WAV")
         return finish(
@@ -173,15 +174,23 @@ def run(ctx: RunContext) -> StageRecord:
 
     samples, rate = read_wav(wav)
     rows = audio_features(samples, rate, cfg.feature_hz)
+    # Put the feature track on the run timeline, as the frames are.
+    if source.offset:
+        for row in rows:
+            row["time"] = round(row["time"] + source.offset, 3)
+        rows = [r for r in rows if 0 <= r["time"] <= probe.duration]
     write_features(features_path, rows)
 
     if cfg.transcribe:
         transcript = transcribe(wav, cfg.whisper_model, cfg.whisper_compute_type)
+        for segment in transcript.segments:
+            segment.start = round(segment.start + source.offset, 2)
+            segment.end = round(segment.end + source.offset, 2)
     else:
         transcript = Transcript(available=False, note="transcription disabled in config")
 
     detail = f"{len(rows)} feature rows, {len(transcript.segments)} transcript segments"
-    ctx.say(f"  audio: {detail}")
+    ctx.say(f"  audio: from the {source.role} stream — {detail}")
     if not transcript.available and transcript.note:
         ctx.say(f"         {transcript.note}")
     return finish("ok", detail, transcript)

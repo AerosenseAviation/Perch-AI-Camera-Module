@@ -61,6 +61,10 @@ class RunContext:
     llm: LLMClient
     tracker: CostTracker
     cache: ResponseCache
+    panel_video: Optional[Path] = None
+    panel_offset: Optional[float] = None
+    auto_sync: bool = True
+    rig: Optional[str] = None
     dry_run: bool = False
     no_audio: bool = False
     module_filter: Optional[list[str]] = None
@@ -75,6 +79,17 @@ class RunContext:
     @property
     def frames_dir(self) -> Path:
         return self.run_dir / "frames"
+
+    def stream_dir(self, role: str) -> Path:
+        return self.frames_dir / role
+
+    def source_for(self, role: str) -> Path:
+        """The video file backing a stream role."""
+        if role == "panel":
+            if self.panel_video is None:
+                raise MissingArtifact("this run has no panel stream")
+            return self.panel_video
+        return self.video
 
     # -- artifact IO ----------------------------------------------------------
 
@@ -123,14 +138,25 @@ def load_manifest(run_dir: Path) -> Optional[RunManifest]:
     return RunManifest.model_validate(json.loads(path.read_text()))
 
 
-def resolve_video(run_dir: Path) -> Path:
-    """Recover the source video for an existing run from its manifest."""
+def resolve_sources(run_dir: Path) -> tuple[Path, Optional[Path]]:
+    """Recover (scene, panel) source videos for an existing run.
+
+    The manifest is authoritative; probe.json is the fallback so a run whose
+    manifest was lost can still have a single stage re-run against it.
+    """
     manifest = load_manifest(run_dir)
-    if manifest:
-        return Path(manifest.video)
+    if manifest and manifest.video:
+        panel = Path(manifest.panel_video) if manifest.panel_video else None
+        return Path(manifest.video), panel
+
     probe = run_dir / "probe.json"
     if probe.is_file():
-        return Path(json.loads(probe.read_text())["path"])
+        data = json.loads(probe.read_text())
+        streams = data.get("streams") or []
+        scene = next((s for s in streams if s.get("role") == "scene"), None)
+        panel = next((s for s in streams if s.get("role") == "panel"), None)
+        if scene:
+            return Path(scene["path"]), (Path(panel["path"]) if panel else None)
     raise MissingArtifact(f"cannot tell which video {run_dir} came from")
 
 
@@ -138,6 +164,24 @@ def find_videos(folder: Path) -> list[Path]:
     return sorted(
         p for p in folder.rglob("*") if p.is_file() and p.suffix.lower() in VIDEO_SUFFIXES
     )
+
+
+def find_panel_for(scene: Path, suffix: str = "-panel") -> Optional[Path]:
+    """Pair a scene file with its instrument file by filename.
+
+    ``flight12.mp4`` picks up ``flight12-panel.mp4`` beside it, in any of the
+    known video extensions — the two cameras rarely write the same container.
+    """
+    if not suffix or scene.stem.endswith(suffix):
+        return None
+    for extension in (scene.suffix, *VIDEO_SUFFIXES):
+        for candidate in {
+            scene.with_name(f"{scene.stem}{suffix}{extension}"),
+            scene.with_name(f"{scene.stem}{suffix}{extension.upper()}"),
+        }:
+            if candidate.is_file():
+                return candidate
+    return None
 
 
 def require_binary(name: str) -> str:

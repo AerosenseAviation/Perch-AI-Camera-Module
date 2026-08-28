@@ -13,11 +13,65 @@ runs_root = "runs"
 # Model-response cache. Shared across runs so prompt iteration is free.
 cache_dir = "runs/.cache"
 
+# --- rigs --------------------------------------------------------------------
+# A rig is a known camera installation. When a rig is named, the capability
+# stage stops guessing the mount and checks the install instead.
+
+[rig]
+# Used when --rig is not given and no panel stream is supplied.
+default = "unknown"
+
+[rig.profiles.cockpit_dual]
+description = "Fixed mount above/between the pilots: wide scene sensor plus a narrow sensor framed on the instruments."
+mount = "panel"
+horizon = true
+runway_on_approach = true
+pilot_hands = true
+pilot_face = false
+wing_or_airframe = false
+outside_terrain = true
+other_occupants = true
+
+[rig.profiles.cockpit_single]
+description = "Fixed forward mount above/between the pilots, wide sensor only. No dedicated instrument sensor."
+mount = "panel"
+horizon = true
+runway_on_approach = true
+pilot_hands = true
+pilot_face = false
+wing_or_airframe = false
+outside_terrain = true
+other_occupants = true
+
+# --- sampling ----------------------------------------------------------------
+
 [sample]
 interval_seconds = 3.0
 max_frames = 400
 long_edge = 768
 jpeg_quality = 80
+
+# The panel stream is sampled faster and kept sharper: a configuration change
+# takes a second, and a needle has to survive JPEG to be readable.
+[sample.panel]
+interval_seconds = 2.0
+max_frames = 500
+long_edge = 1024
+jpeg_quality = 92
+
+[sync]
+# Cross-correlate the two audio tracks to align independent cameras.
+enabled = true
+sample_rate = 4000
+# How far apart the two recordings may have started, in seconds.
+max_offset_seconds = 300.0
+# Seconds of audio used for the correlation, taken from the middle of the clip.
+window_seconds = 240.0
+# Below this peak sharpness the result is not trusted and the offset stays 0.
+# Measured separation: a true alignment scores ~0.55-0.65, unrelated audio
+# ~0.27. A wrong offset silently corrupts every timestamp in the debrief, so
+# this fails safe — assuming a common start is far better than a bad shift.
+min_confidence = 0.4
 
 [audio]
 enabled = true
@@ -34,10 +88,14 @@ max_frames_per_call = 20
 
 [capability]
 frame_count = 8
+panel_frame_count = 6
 max_tokens = 2000
 
 [analyse]
 frames_per_batch = 20
+panel_frames_per_batch = 24
+# Scene/panel pairs sent to the crosscheck module in one call.
+pairs_per_batch = 10
 max_tokens = 8000
 max_transcript_chars = 6000
 telemetry_summary_rows = 24
@@ -45,6 +103,11 @@ telemetry_summary_rows = 24
 [compose]
 max_tokens = 8000
 max_observations = 400
+
+[validate]
+# A numeric claim must cite a moment the panel sensor actually covered. This is
+# the tolerance, in seconds, between the cited timestamp and a panel frame.
+panel_frame_tolerance = 5.0
 
 # Cost per million tokens. Update when Anthropic pricing changes.
 [pricing."claude-opus-5"]

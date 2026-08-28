@@ -1,20 +1,29 @@
-"""The module table: a module runs only when the viewpoint supports it."""
+"""The module table: a module runs only when the rig supports it."""
 
 from __future__ import annotations
 
 import pytest
 
-from debrief.models import Viewpoint, ViewpointVisible
-from debrief.modules import MODULE_NAMES, ViewpointContext, decide, phases_for
+from debrief.models import PanelAim, Viewpoint, ViewpointVisible
+from debrief.modules import MODULE_NAMES, RigContext, decide, phases_for, streams_for
 
 
 def viewpoint(mount="panel", **visible) -> Viewpoint:
     return Viewpoint(mount=mount, visible=ViewpointVisible(**visible))
 
 
-NO_AUDIO = ViewpointContext(has_audio=False, has_transcript=False, has_telemetry=False)
-WITH_AUDIO = ViewpointContext(has_audio=True, has_transcript=True, has_telemetry=False)
-UNTRANSCRIBED = ViewpointContext(has_audio=True, has_transcript=False, has_telemetry=False)
+NO_AUDIO = RigContext(has_audio=False, has_transcript=False, has_telemetry=False)
+WITH_AUDIO = RigContext(has_audio=True, has_transcript=True, has_telemetry=False)
+UNTRANSCRIBED = RigContext(has_audio=True, has_transcript=False, has_telemetry=False)
+
+READABLE = PanelAim(in_frame="full", legible="clear", panel_type="analog")
+UNREADABLE = PanelAim(in_frame="full", legible="illegible", glare=True)
+MISAIMED = PanelAim(in_frame="none", legible="illegible")
+
+
+def dual(panel: PanelAim, **kwargs) -> RigContext:
+    """A two-sensor rig with a given aim-check result."""
+    return RigContext(has_panel_stream=True, panel=panel, **kwargs)
 
 
 def test_always_on_modules_survive_a_blind_camera():
@@ -25,9 +34,11 @@ def test_always_on_modules_survive_a_blind_camera():
     assert "landing" in modules.disabled
 
 
-def test_a_clear_panel_enables_the_panel_module():
+def test_a_clear_panel_enables_the_panel_module_on_a_single_camera_rig():
     modules = decide(viewpoint(instrument_panel="clear"), NO_AUDIO)
     assert "panel" in modules.enabled
+    # But with only one sensor there is nothing to cross-reference against.
+    assert "crosscheck" in modules.disabled
 
 
 @pytest.mark.parametrize("state", ["partial", "none"])
@@ -68,7 +79,7 @@ def test_pattern_accepts_either_terrain_or_telemetry():
     assert "pattern" in decide(terrain, NO_AUDIO).enabled
 
     blind_but_tracked = viewpoint(mount="panel", outside_terrain=False)
-    with_gps = ViewpointContext(has_audio=False, has_telemetry=True)
+    with_gps = RigContext(has_audio=False, has_telemetry=True)
     assert "pattern" in decide(blind_but_tracked, with_gps).enabled
 
     assert "pattern" in decide(blind_but_tracked, NO_AUDIO).disabled
@@ -106,3 +117,54 @@ def test_phases_for_intersects_with_the_phases_actually_flown():
     ]
     assert phases_for("landing", ["ground", "taxi"]) == []
     assert phases_for("nosuch", ["ground"]) == []
+
+
+# --- the two-sensor rig ------------------------------------------------------
+
+
+def test_a_legible_instrument_sensor_unlocks_panel_and_crosscheck():
+    modules = decide(viewpoint(mount="panel", instrument_panel="none"), dual(READABLE))
+    assert "panel" in modules.enabled
+    assert "crosscheck" in modules.enabled
+
+
+def test_an_illegible_instrument_sensor_blocks_both():
+    modules = decide(viewpoint(instrument_panel="none"), dual(UNREADABLE))
+    assert "panel" in modules.disabled
+    assert "crosscheck" in modules.disabled
+    assert "cannot be read" in modules.decision("panel").reason
+    assert "glare" in modules.decision("panel").reason
+
+
+def test_a_misaimed_sensor_says_so_plainly():
+    modules = decide(viewpoint(), dual(MISAIMED))
+    assert "not pointing at the panel" in modules.decision("panel").reason
+
+
+def test_an_unchecked_sensor_fails_closed():
+    """No aim check means no permission to read instruments."""
+    modules = decide(viewpoint(), RigContext(has_panel_stream=True, panel=None))
+    assert "panel" in modules.disabled
+    assert "never checked" in modules.decision("panel").reason
+
+
+def test_crosscheck_needs_a_second_sensor_not_just_a_clear_panel():
+    single = decide(viewpoint(instrument_panel="clear"), NO_AUDIO)
+    assert "crosscheck" in single.disabled
+    assert "only one sensor" in single.decision("crosscheck").reason
+
+
+def test_modules_declare_the_stream_they_read():
+    assert streams_for("panel") == ("panel",)
+    assert streams_for("crosscheck") == ("scene", "panel")
+    assert streams_for("environment") == ("scene",)
+    assert streams_for("nosuch") == ("scene",)
+
+    modules = decide(viewpoint(), dual(READABLE))
+    assert modules.decision("panel").streams == ["panel"]
+    assert modules.decision("crosscheck").streams == ["scene", "panel"]
+
+
+def test_the_aim_hint_survives_into_the_decision_tip():
+    modules = decide(viewpoint(), dual(UNREADABLE))
+    assert "narrow sensor" in (modules.decision("panel").tip or "")
