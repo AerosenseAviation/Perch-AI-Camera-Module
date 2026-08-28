@@ -380,7 +380,7 @@ def _sdk_takes_output_config(client: Any) -> bool:
 
 
 def load_prompt(name: str, **substitutions: str) -> str:
-    """Read a prompt file from ``debrief/prompts`` and fill ``{placeholders}``."""
+    """Read a prompt file from ``perch/prompts`` and fill ``{placeholders}``."""
     from .config import PROMPTS_DIR
 
     path = PROMPTS_DIR / name

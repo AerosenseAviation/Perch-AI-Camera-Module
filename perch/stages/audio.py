@@ -116,7 +116,7 @@ def transcribe(wav: Path, model_name: str, compute_type: str) -> Transcript:
     except ImportError:
         return Transcript(
             available=False,
-            note="faster-whisper is not installed; run `pip install 'flight-debrief[transcribe]'`",
+            note="faster-whisper is not installed; run `pip install 'perch[transcribe]'`",
         )
 
     model = WhisperModel(model_name, device="cpu", compute_type=compute_type)

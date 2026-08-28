@@ -1,5 +1,5 @@
-# Default configuration. Copy this to ./debrief.toml and edit to override.
-# Lookup order: $DEBRIEF_CONFIG, ./debrief.toml, ~/.config/debrief/debrief.toml,
+# Default configuration. Copy this to ./perch.toml and edit to override.
+# Lookup order: $PERCH_CONFIG, ./perch.toml, ~/.config/perch/perch.toml,
 # then this packaged file.
 
 [models]

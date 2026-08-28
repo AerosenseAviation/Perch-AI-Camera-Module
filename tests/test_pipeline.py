@@ -10,8 +10,8 @@ import re
 
 import pytest
 
-from debrief.llm import set_stub
-from debrief.models import (
+from perch.llm import set_stub
+from perch.models import (
     Debrief,
     FrameLabels,
     Modules,
@@ -23,8 +23,8 @@ from debrief.models import (
     RunManifest,
     Viewpoint,
 )
-from debrief.pipeline import run_pipeline
-from debrief.validate import mentions_measured_quantity
+from perch.pipeline import run_pipeline
+from perch.validate import mentions_measured_quantity
 
 from .conftest import needs_ffmpeg
 

@@ -8,13 +8,13 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from debrief.models import FrameIndex, Phases, Probe, Transcript
-from debrief.pipeline import build_context
-from debrief.stages import audio as audio_stage
-from debrief.stages import probe as probe_stage
-from debrief.stages import sample as sample_stage
-from debrief.stages import segment as segment_stage
-from debrief.stages import telemetry as telemetry_stage
+from perch.models import FrameIndex, Phases, Probe, Transcript
+from perch.pipeline import build_context
+from perch.stages import audio as audio_stage
+from perch.stages import probe as probe_stage
+from perch.stages import sample as sample_stage
+from perch.stages import segment as segment_stage
+from perch.stages import telemetry as telemetry_stage
 
 from .conftest import needs_ffmpeg
 

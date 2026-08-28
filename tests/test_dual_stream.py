@@ -5,11 +5,11 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from debrief.config import SyncConfig
-from debrief.models import FrameIndex, FrameRef, PanelAim, Probe
-from debrief.pipeline import build_context
-from debrief.stages import probe as probe_stage
-from debrief.stages import sample as sample_stage
+from perch.config import SyncConfig
+from perch.models import FrameIndex, FrameRef, PanelAim, Probe
+from perch.pipeline import build_context
+from perch.stages import probe as probe_stage
+from perch.stages import sample as sample_stage
 
 from .conftest import needs_ffmpeg
 
@@ -256,7 +256,7 @@ def test_the_envelope_high_pass_leaves_no_edge_artefact():
     both ends of every envelope — and those artefacts correlate almost perfectly
     at zero lag, silently beating the true alignment.
     """
-    from debrief.stages.probe import _envelope
+    from perch.stages.probe import _envelope
 
     rate = 4000
     rng = np.random.default_rng(11)

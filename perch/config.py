@@ -3,10 +3,10 @@
 Model names, sampling rates, rig profiles and prices live in TOML, never in
 code, so a run can be re-tuned without a redeploy. Lookup order, first hit wins:
 
-    $DEBRIEF_CONFIG
-    ./debrief.toml
-    ~/.config/debrief/debrief.toml
-    the packaged debrief.default.toml
+    $PERCH_CONFIG
+    ./perch.toml
+    ~/.config/perch/perch.toml
+    the packaged perch.default.toml
 
 A user file is merged over the packaged defaults, so it only needs the keys it
 changes.
@@ -22,7 +22,7 @@ from typing import Any, Optional
 from pydantic import BaseModel, Field
 
 PACKAGE_DIR = Path(__file__).resolve().parent
-DEFAULT_CONFIG_PATH = PACKAGE_DIR / "debrief.default.toml"
+DEFAULT_CONFIG_PATH = PACKAGE_DIR / "perch.default.toml"
 PROMPTS_DIR = PACKAGE_DIR / "prompts"
 TEMPLATES_DIR = PACKAGE_DIR / "templates"
 
@@ -185,11 +185,11 @@ def candidate_paths(explicit: Optional[Path] = None) -> list[Path]:
     paths: list[Path] = []
     if explicit:
         paths.append(Path(explicit))
-    env = os.environ.get("DEBRIEF_CONFIG")
+    env = os.environ.get("PERCH_CONFIG")
     if env:
         paths.append(Path(env))
-    paths.append(Path.cwd() / "debrief.toml")
-    paths.append(Path.home() / ".config" / "debrief" / "debrief.toml")
+    paths.append(Path.cwd() / "perch.toml")
+    paths.append(Path.home() / ".config" / "perch" / "perch.toml")
     return paths
 
 

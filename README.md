@@ -1,4 +1,4 @@
-# AI Flight Debrief Camera
+# Perch
 
 An AI cockpit camera for pilots, and the pipeline behind it.
 
@@ -41,26 +41,26 @@ export ANTHROPIC_API_KEY=sk-ant-...
 
 ```bash
 # One camera, any mount — the original single-stream behaviour.
-debrief run flight.mp4
+perch run flight.mp4
 
 # The rig: wide sensor plus instrument sensor.
-debrief run scene.mp4 --panel instruments.mp4 --rig cockpit_dual
+perch run scene.mp4 --panel instruments.mp4 --rig cockpit_dual
 
 # Check the alignment before committing to a run.
-debrief probe scene.mp4 --panel instruments.mp4
+perch probe scene.mp4 --panel instruments.mp4
 
-debrief run scene.mp4 --panel instruments.mp4 --dry-run    # no model calls
-debrief run scene.mp4 --max-cost 0.50                      # stop at a ceiling
-debrief run scene.mp4 --modules panel,crosscheck           # only these
+perch run scene.mp4 --panel instruments.mp4 --dry-run    # no model calls
+perch run scene.mp4 --max-cost 0.50                      # stop at a ceiling
+perch run scene.mp4 --modules panel,crosscheck           # only these
 
 # A folder. flight01.mp4 automatically picks up flight01-panel.mp4.
-debrief batch ~/footage --rig cockpit_dual --max-cost-total 20.00
+perch batch ~/footage --rig cockpit_dual --max-cost-total 20.00
 
-debrief stage analyse runs/flight-20260828-101500          # re-run one stage
+perch stage analyse runs/flight-20260828-101500          # re-run one stage
 
-debrief eval export runs/ -o grades.csv                    # grade by hand
-debrief eval report grades.csv                             # useful/obvious/wrong
-debrief eval rejections runs/                              # validator rate
+perch eval export runs/ -o grades.csv                    # grade by hand
+perch eval report grades.csv                             # useful/obvious/wrong
+perch eval rejections runs/                              # validator rate
 ```
 
 Each run writes to `runs/<video-stem>-<timestamp>/`. Nothing leaves the machine
@@ -196,9 +196,9 @@ steepest bank, the light on the ridge, the smoothest of three touchdowns.
 ## Anti-hallucination
 
 Enforced twice: once in the prompt, once in code. The five prompt rules live in
-`debrief/prompts/rules.md` and are spliced into the stage 7 and 8 system prompts.
+`perch/prompts/rules.md` and are spliced into the stage 7 and 8 system prompts.
 
-The validator (`debrief/validate.py`) rejects an observation when:
+The validator (`perch/validate.py`) rejects an observation when:
 
 1. it cites a timestamp outside the flight duration;
 2. it cites no timestamp at all;
@@ -249,10 +249,10 @@ spend.
 This is the instrument that decides whether the product works.
 
 ```bash
-debrief batch ~/footage --rig cockpit_dual
-debrief eval export runs/ -o grades.csv
+perch batch ~/footage --rig cockpit_dual
+perch eval export runs/ -o grades.csv
 # fill `verdict` with useful / obvious / wrong
-debrief eval report grades.csv
+perch eval report grades.csv
 ```
 
 The report breaks verdicts down by mount, module, phase **and stream**, and
@@ -271,7 +271,7 @@ confident wrong airspeed costs the customer.
 ## Layout
 
 ```
-debrief/
+perch/
   cli.py            command line
   pipeline.py       drives the nine stages
   config.py         TOML configuration, rig profiles

@@ -1,7 +1,7 @@
 """The nine pipeline stages.
 
 Each stage exposes ``run(ctx) -> StageRecord`` and is addressable by name from
-``debrief stage <name> <run-dir>``. Stages read only from disk, so any one of
+``perch stage <name> <run-dir>``. Stages read only from disk, so any one of
 them can be re-run alone.
 """
 

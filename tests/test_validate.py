@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from debrief.models import Observation
-from debrief.validate import (
+from perch.models import Observation
+from perch.validate import (
     RULE_LOW_CONFIDENCE_SAFETY,
     RULE_NO_TIMESTAMP,
     RULE_NUMBER_WITHOUT_PANEL_FRAME,

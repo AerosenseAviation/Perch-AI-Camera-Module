@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from debrief import evaluate
-from debrief.models import (
+from perch import evaluate
+from perch.models import (
     Observation,
     Observations,
     Rejections,

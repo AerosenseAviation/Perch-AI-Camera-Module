@@ -1,12 +1,12 @@
-"""The command line.
+"""The Perch command line.
 
-    debrief probe <file>
-    debrief run <scene> [--panel <file>] [--rig cockpit_dual] [--modules a,b]
+    perch probe <file>
+    perch run <scene> [--panel <file>] [--rig cockpit_dual] [--modules a,b]
                         [--no-audio] [--max-cost 0.50] [--dry-run]
-    debrief batch <folder> [--max-cost-total 20.00]
-    debrief stage <name> <run-dir>
-    debrief eval export <run-dir> -o grades.csv
-    debrief eval report grades.csv
+    perch batch <folder> [--max-cost-total 20.00]
+    perch stage <name> <run-dir>
+    perch eval export <run-dir> -o grades.csv
+    perch eval report grades.csv
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ from .stages.probe import align_audio, probe_file
 
 app = typer.Typer(
     add_completion=False,
-    help="Turn cockpit camera footage into a post-flight debrief.",
+    help="Perch — turn cockpit camera footage into a post-flight debrief.",
 )
 eval_app = typer.Typer(add_completion=False, no_args_is_help=True, help="Grading harness.")
 app.add_typer(eval_app, name="eval")
@@ -59,7 +59,7 @@ def main_callback(
     version: bool = typer.Option(False, "--version", help="Print the version and exit."),
 ) -> None:
     if version:
-        typer.echo(f"flight-debrief-camera {__version__}")
+        typer.echo(f"perch {__version__}")
         raise typer.Exit()
     if ctx.invoked_subcommand is None:
         typer.echo(ctx.get_help())
@@ -153,7 +153,7 @@ def run(
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Run every local stage and skip all model calls."
     ),
-    config: Optional[Path] = typer.Option(None, "--config", help="Path to a debrief.toml."),
+    config: Optional[Path] = typer.Option(None, "--config", help="Path to a perch.toml."),
 ) -> None:
     """Run the whole pipeline over one video."""
     cfg = _config(config)

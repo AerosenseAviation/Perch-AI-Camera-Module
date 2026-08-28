@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-from debrief.cache import ResponseCache, hash_files
-from debrief.config import load_config
-from debrief.cost import CostLimitExceeded, CostTracker, estimate_run, frame_tokens, image_tokens
-from debrief.llm import LLMClient, LLMDisabled, TextPart, extract_json, set_stub
-from debrief.models import Viewpoint
+from perch.cache import ResponseCache, hash_files
+from perch.config import load_config
+from perch.cost import CostLimitExceeded, CostTracker, estimate_run, frame_tokens, image_tokens
+from perch.llm import LLMClient, LLMDisabled, TextPart, extract_json, set_stub
+from perch.models import Viewpoint
 
 
 # --- cost --------------------------------------------------------------------
@@ -173,7 +173,7 @@ def test_json_is_recovered_from_prose(text):
 
 
 def test_json_recovery_fails_loudly():
-    from debrief.llm import LLMError
+    from perch.llm import LLMError
 
     with pytest.raises(LLMError):
         extract_json("I would rather not answer.")

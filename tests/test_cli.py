@@ -9,8 +9,8 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from debrief.cli import app
-from debrief.llm import set_stub
+from perch.cli import app
+from perch.llm import set_stub
 
 from .conftest import needs_ffmpeg
 from .test_pipeline import WING_CAM, make_stub
@@ -21,7 +21,7 @@ runner = CliRunner()
 @pytest.fixture
 def config_file(tmp_path) -> Path:
     """A config that keeps every artifact inside the test's tmp directory."""
-    path = tmp_path / "debrief.toml"
+    path = tmp_path / "perch.toml"
     path.write_text(
         "[paths]\n"
         f'runs_root = "{tmp_path / "runs"}"\n'
@@ -39,13 +39,13 @@ def invoke(*args):
 def test_version():
     result = invoke("--version")
     assert result.exit_code == 0
-    assert "flight-debrief-camera" in result.output
+    assert "perch" in result.output
 
 
 def test_bare_invocation_shows_help():
     result = invoke()
     assert result.exit_code == 0
-    assert "Turn cockpit camera footage into a post-flight debrief." in result.output
+    assert "turn cockpit camera footage into a post-flight debrief." in result.output.lower()
 
 
 @needs_ffmpeg

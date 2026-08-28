@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "flight-debrief-camera"
+name = "perch"
 version = "0.5.0"
 description = "AI cockpit camera: post-flight debrief from a wide scene sensor and a narrow instrument sensor."
 requires-python = ">=3.11"
@@ -20,13 +20,13 @@ transcribe = ["faster-whisper>=1.0"]
 dev = ["pytest>=8.0"]
 
 [project.scripts]
-debrief = "debrief.cli:main"
+perch = "perch.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["debrief*"]
+include = ["perch*"]
 
 [tool.setuptools.package-data]
-debrief = ["prompts/*.md", "prompts/modules/*.md", "templates/*.j2", "debrief.default.toml"]
+perch = ["prompts/*.md", "prompts/modules/*.md", "templates/*.j2", "perch.default.toml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from debrief.config import load_config
-from debrief.llm import set_stub
+from perch.config import load_config
+from perch.llm import set_stub
 
 HAS_FFMPEG = shutil.which("ffmpeg") is not None and shutil.which("ffprobe") is not None
 

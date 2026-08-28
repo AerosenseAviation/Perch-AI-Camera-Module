@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from debrief.models import PanelAim, Viewpoint, ViewpointVisible
-from debrief.modules import MODULE_NAMES, RigContext, decide, phases_for, streams_for
+from perch.models import PanelAim, Viewpoint, ViewpointVisible
+from perch.modules import MODULE_NAMES, RigContext, decide, phases_for, streams_for
 
 
 def viewpoint(mount="panel", **visible) -> Viewpoint:
