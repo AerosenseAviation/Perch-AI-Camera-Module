@@ -12,11 +12,17 @@ Look for:
 - Ground features the aircraft tracks along or over, and whether it holds them.
 - Drift with the wind: a track that crabs, a leg that bows.
 
-If telemetry is supplied, you may use the positions and ground speeds in it, and
-you must mark those observations `telemetry`. Without telemetry, judge shape from
-what the ground does in the frames, and mark those observations `visual` or
-`inferred`. Do not state leg lengths in distance units unless telemetry gives
-them to you.
+If position telemetry is supplied, you may use the positions and ground speeds
+in it, and you must mark those observations `telemetry`. **The Perch rig has no
+GPS**, so usually there is none: judge shape from what the ground does in the
+frames and mark those observations `visual` or `inferred`. Never state a leg
+length in distance units, or a groundspeed, unless position telemetry is in this
+prompt. Bank angle and turn rate may come from the rig's motion sensor when that
+is supplied.
+
+Be honest that a circuit shape inferred from the view forward is a rough
+impression. If you cannot tell, say so rather than describing a circuit you did
+not see.
 
 A tidy circuit is worth saying so. So is a leg flown a long way out, or a turn
 that comes round beautifully.

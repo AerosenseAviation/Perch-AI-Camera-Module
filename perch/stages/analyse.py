@@ -76,18 +76,22 @@ def telemetry_block(
         return None
     step = max(1, len(slice_) // max_rows)
     sampled = slice_[::step][:max_rows]
-    header = "time_s,lat,lon,alt_m,ground_speed_ms"
+    keys = ("time", "latitude", "longitude", "altitude", "ground_speed", "bank", "pitch", "g_load")
+    # Only include columns something actually measured.
+    present = [k for k in keys if k == "time" or any(k in r for r in slice_)]
+    header = ",".join(present)
     lines = [
         ",".join(
-            f"{r.get(k, float('nan')):.5f}" if k in ("latitude", "longitude")
-            else f"{r.get(k, float('nan')):.1f}"
-            for k in ("time", "latitude", "longitude", "altitude", "ground_speed")
+            ("" if k not in r else (f"{r[k]:.5f}" if k in ("latitude", "longitude") else f"{r[k]:.1f}"))
+            for k in present
         )
         for r in sampled
     ]
     return (
-        "Telemetry for this time range (GPS; altitude in metres, ground speed in "
-        "metres per second). You may quote these numbers:\n" + header + "\n" + "\n".join(lines)
+        "Telemetry for this time range. Altitude is metres, ground speed metres "
+        "per second, bank and pitch degrees, g_load in g. Blank means that "
+        "quantity was not measured — do not quote a blank column:\n"
+        + header + "\n" + "\n".join(lines)
     )
 
 
@@ -322,13 +326,20 @@ def run(ctx: RunContext) -> StageRecord:
                 proposed.extend(found)
                 calls += 1
 
+    # What the telemetry can vouch for, rather than merely whether it exists.
+    # The Perch rig has no GPS, so it authorises attitude and g but never a speed.
+    channels = telemetry_stage.channels(telemetry_rows)
     validation = ValidationContext(
         duration=probe.duration,
         # Numbers are allowed only when the module that reads instruments
         # actually ran. A --modules filter that leaves panel out therefore also
         # blocks numeric claims, which is the safer reading.
         panel_enabled=bool({"panel", "crosscheck"} & set(modules.enabled)),
-        has_telemetry=len(telemetry_rows) >= 10,
+        has_telemetry=channels.any and len(telemetry_rows) >= 10,
+        telemetry_position=channels.position and len(telemetry_rows) >= 10,
+        telemetry_attitude=(
+            (channels.attitude or channels.acceleration) and len(telemetry_rows) >= 10
+        ),
         panel_frame_times=tuple(f.t for f in frames["panel"]),
         panel_frame_tolerance=ctx.config.validate_.panel_frame_tolerance,
     )

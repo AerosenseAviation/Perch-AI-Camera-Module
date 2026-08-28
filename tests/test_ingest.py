@@ -315,3 +315,88 @@ def test_segment_falls_back_honestly_without_telemetry_or_a_model(clip, cfg, tmp
     assert record.status == "skipped"
     assert phases.source == "fallback"
     assert len(phases.spans) == 1
+
+
+# --- segmentation without GPS (the Perch rig) --------------------------------
+
+
+def _perch_flight() -> list[dict[str, float]]:
+    """A flight as the Perch rig sees it: barometer and IMU, no GPS at all."""
+    rows = []
+    for t in range(0, 600):
+        if t < 60:                       # parked, engine running
+            alt, vibe = 100.0, 0.02
+        elif t < 120:                    # taxi
+            alt, vibe = 100.0, 0.30
+        elif t < 150:                    # roll and lift off
+            alt, vibe = 100.0 + max(0, t - 140) * 3, 0.45
+        elif t < 300:                    # climb
+            alt, vibe = 130.0 + (t - 150) * 5, 0.20
+        elif t < 420:                    # cruise
+            alt, vibe = 880.0, 0.10
+        elif t < 540:                    # descent
+            alt, vibe = 880.0 - (t - 420) * 6, 0.10
+        else:                            # down and stopped
+            alt, vibe = 100.0, 0.02
+        # Deterministic pseudo-vibration on the accelerometer.
+        jitter = vibe * (1 if t % 2 else -1)
+        rows.append(
+            {
+                "time": float(t),
+                "altitude": alt,
+                "accel_x": jitter,
+                "accel_y": jitter * 0.5,
+                "accel_z": 9.81 + jitter,
+                "bank": 0.0,
+                "turn_rate": 0.0,
+            }
+        )
+    # The touchdown thump, at 540s.
+    rows[540]["accel_z"] = 9.81 * 1.9
+    return rows
+
+
+def test_segments_a_flight_from_barometer_and_imu_with_no_gps():
+    rows = _perch_flight()
+    assert not any("latitude" in r or "ground_speed" in r for r in rows)
+
+    phases = segment_stage.phases_from_telemetry(rows, 600.0, 5)
+    present = phases.present()
+
+    assert phases.source == "telemetry"
+    assert "barometer and IMU" in (phases.note or "")
+    assert "ground" in present and "climb" in present and "cruise" in present
+    assert present[-1] == "shutdown"
+    assert phases.spans[0].start == 0.0
+    assert phases.spans[-1].end == 600.0
+
+
+def test_the_touchdown_thump_anchors_the_landing():
+    rows = _perch_flight()
+    phases = segment_stage.phases_from_telemetry(rows, 600.0, 5)
+    assert "touchdown detected" in (phases.note or "")
+    assert phases.phase_at(541.0) == "landing"
+
+
+def test_channels_report_what_was_actually_measured():
+    perch_rows = _perch_flight()
+    ch = telemetry_stage.channels(perch_rows, source="perch")
+    assert ch.altitude and ch.attitude and ch.acceleration
+    assert ch.position is False
+    assert ch.can_segment is True
+    assert ch.authorises_speed is False
+
+    gps_rows = [{"time": 0.0, "latitude": -33.9, "longitude": 18.4, "ground_speed": 30.0}]
+    assert telemetry_stage.channels(gps_rows).position is True
+    assert telemetry_stage.channels([]).any is False
+
+
+def test_gps_flights_still_segment_the_old_way():
+    rows = [
+        {"time": float(t), "ground_speed": 45.0 if 150 < t < 500 else 0.0,
+         "altitude": 800.0 if 150 < t < 500 else 100.0}
+        for t in range(600)
+    ]
+    phases = segment_stage.phases_from_telemetry(rows, 600.0, 5)
+    assert "GPS" in (phases.note or "")
+    assert "cruise" in phases.present()

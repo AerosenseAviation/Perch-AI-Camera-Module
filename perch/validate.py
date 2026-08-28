@@ -28,6 +28,7 @@ RULE_NO_TIMESTAMP = "no_timestamp"
 RULE_UNSUPPORTED_NUMBER = "unsupported_number"
 RULE_LOW_CONFIDENCE_SAFETY = "low_confidence_safety"
 RULE_NUMBER_WITHOUT_PANEL_FRAME = "number_without_panel_frame"
+RULE_ATTITUDE_NUMBER_WITHOUT_SENSOR = "attitude_number_without_sensor"
 
 # A number carrying a unit that only an instrument or a GPS can supply.
 _UNIT_NUMBER = re.compile(
@@ -54,6 +55,21 @@ _TRAILING_DATUM = re.compile(
 )
 
 
+# Bank, pitch and g. An IMU measures these directly; a camera cannot, and a
+# tilted horizon in a frame is not a protractor.
+_ATTITUDE_NUMBER = re.compile(
+    r"""(?:\b\d[\d,]*(?:\.\d+)?\s*(?:°|deg\b|degrees?\b))
+      | (?:\b\d+(?:\.\d+)?\s*g\b)""",
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def mentions_attitude_quantity(text: str) -> Optional[str]:
+    """Return the offending substring when a claim states a measured angle or g."""
+    match = _ATTITUDE_NUMBER.search(text)
+    return match.group(0).strip() if match else None
+
+
 def mentions_measured_quantity(text: str) -> Optional[str]:
     """Return the offending substring when a claim states a read-off number."""
     for pattern in (_UNIT_NUMBER, _QUANTITY_PHRASE, _TRAILING_DATUM):
@@ -67,13 +83,30 @@ def mentions_measured_quantity(text: str) -> Optional[str]:
 class ValidationContext:
     duration: float
     panel_enabled: bool
-    has_telemetry: bool
+    has_telemetry: bool = False
     panel_frame_times: Sequence[float] = field(default_factory=tuple)
     panel_frame_tolerance: float = 5.0
+    # What the telemetry actually measured. "There are rows" is not a
+    # capability: an IMU can vouch for bank angle and g, and for nothing at all
+    # about airspeed.
+    telemetry_position: bool = False
+    telemetry_attitude: bool = False
+
+    def __post_init__(self) -> None:
+        # `has_telemetry` alone used to imply GPS. Keep old callers working by
+        # reading it as position data unless told otherwise.
+        if self.has_telemetry and not (self.telemetry_position or self.telemetry_attitude):
+            self.telemetry_position = True
 
     @property
     def numbers_allowed(self) -> bool:
-        return self.panel_enabled or self.has_telemetry
+        """Speeds and altitudes: only a readable panel or a GPS can supply one."""
+        return self.panel_enabled or self.telemetry_position
+
+    @property
+    def attitude_numbers_allowed(self) -> bool:
+        """Angles and g: an IMU measures them, and so does an attitude indicator."""
+        return self.telemetry_attitude or self.panel_enabled
 
     @property
     def has_panel_stream(self) -> bool:
@@ -117,7 +150,7 @@ def check(obs: Observation, ctx: ValidationContext) -> tuple[list[str], str]:
             )
         elif (
             ctx.has_panel_stream
-            and not ctx.has_telemetry
+            and not ctx.telemetry_position
             and obs.timestamps
             and not ctx.panel_covers(obs.timestamps)
         ):
@@ -129,6 +162,14 @@ def check(obs: Observation, ctx: ValidationContext) -> tuple[list[str], str]:
                 f"states {offender!r} at a moment the instrument sensor did not cover "
                 f"(nearest panel frame is more than {ctx.panel_frame_tolerance:.0f}s away)"
             )
+
+    angle = mentions_attitude_quantity(obs.claim)
+    if angle and not ctx.attitude_numbers_allowed:
+        broken.append(RULE_ATTITUDE_NUMBER_WITHOUT_SENSOR)
+        details.append(
+            f"states {angle!r} with no motion sensor and no readable attitude "
+            "indicator — a tilted horizon in a frame is not a protractor"
+        )
 
     if obs.confidence == "low" and obs.interest == "safety":
         broken.append(RULE_LOW_CONFIDENCE_SAFETY)

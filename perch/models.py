@@ -110,6 +110,36 @@ class ProbeResult(BaseModel):
         return self.display_width / h
 
 
+class TelemetryChannels(BaseModel):
+    """What a telemetry file actually measured.
+
+    "There are rows" is not a capability. A GPS gives position and groundspeed;
+    an IMU gives attitude and g; a barometer gives altitude. Each authorises a
+    different kind of claim, and conflating them is how an IMU ends up
+    licensing an airspeed.
+    """
+
+    source: Literal["none", "gpmf", "perch"] = "none"
+    position: bool = False       # latitude, longitude, ground speed — GPS only
+    altitude: bool = False       # barometric or GPS altitude
+    attitude: bool = False       # bank and pitch, from a fused IMU
+    acceleration: bool = False   # g load and turn rate
+
+    @property
+    def any(self) -> bool:
+        return self.position or self.altitude or self.attitude or self.acceleration
+
+    @property
+    def can_segment(self) -> bool:
+        """Enough to derive phases locally, without the vision fallback."""
+        return self.altitude
+
+    @property
+    def authorises_speed(self) -> bool:
+        """Only GPS can supply a speed the panel did not show."""
+        return self.position
+
+
 class SyncResult(BaseModel):
     """How the panel stream was aligned to the scene stream."""
 

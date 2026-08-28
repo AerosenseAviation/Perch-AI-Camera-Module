@@ -26,7 +26,7 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
-from ..models import Probe, StageRecord
+from ..models import Probe, StageRecord, TelemetryChannels
 from ..runs import RunContext
 
 NAME = "telemetry"
@@ -40,7 +40,18 @@ COLUMNS = [
     "accel_x",
     "accel_y",
     "accel_z",
+    "bank",
+    "pitch",
+    "g_load",
+    "turn_rate",
 ]
+
+# Which columns prove which capability. Position needs GPS; the Perch rig has
+# none, so it fills altitude (barometer) and attitude (IMU) instead.
+POSITION_COLUMNS = ("latitude", "longitude", "ground_speed")
+ALTITUDE_COLUMNS = ("altitude",)
+ATTITUDE_COLUMNS = ("bank", "pitch")
+ACCELERATION_COLUMNS = ("accel_x", "accel_y", "accel_z", "g_load", "turn_rate")
 
 _DOC_KEY = re.compile(r"^(?:Doc(\d+)|Main|Track\d+)\s*:\s*(.+)$")
 _NUMBER = re.compile(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?")
@@ -201,6 +212,38 @@ def read_csv(path: Path) -> list[dict[str, float]]:
     return out
 
 
+def channels(rows: list[dict[str, float]], source: str = "gpmf") -> TelemetryChannels:
+    """Derive what this telemetry file can actually vouch for."""
+    if not rows:
+        return TelemetryChannels()
+    present = {key for row in rows for key in row}
+
+    def has(names: tuple[str, ...]) -> bool:
+        return any(n in present for n in names)
+
+    return TelemetryChannels(
+        source=source,  # type: ignore[arg-type]
+        position=has(POSITION_COLUMNS),
+        altitude=has(ALTITUDE_COLUMNS),
+        attitude=has(ATTITUDE_COLUMNS),
+        acceleration=has(ACCELERATION_COLUMNS),
+    )
+
+
+def describe(ch: TelemetryChannels) -> str:
+    parts = [
+        name
+        for name, on in (
+            ("position", ch.position),
+            ("altitude", ch.altitude),
+            ("attitude", ch.attitude),
+            ("acceleration", ch.acceleration),
+        )
+        if on
+    ]
+    return ", ".join(parts) or "nothing"
+
+
 def run(ctx: RunContext) -> StageRecord:
     started = time.time()
     probe = ctx.read_json("probe.json", Probe)
@@ -251,10 +294,14 @@ def run(ctx: RunContext) -> StageRecord:
             detail="no samples decoded",
         )
 
-    ctx.say(f"  telemetry: {len(rows)} samples over {rows[-1]['time']:.0f}s")
+    ch = channels(rows, source="gpmf")
+    ctx.say(
+        f"  telemetry: {len(rows)} samples over {rows[-1]['time']:.0f}s "
+        f"[{describe(ch)}]"
+    )
     return StageRecord(
         name=NAME,
         status="ok",
         seconds=round(time.time() - started, 3),
-        detail=f"{len(rows)} samples",
+        detail=f"{len(rows)} samples ({describe(ch)})",
     )

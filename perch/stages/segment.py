@@ -1,8 +1,14 @@
 """Stage 5 — segment.
 
 Divide the flight into phases. Telemetry gives the better answer, so it wins
-when present. Without telemetry the fast vision model labels one frame every 30
+when present. Without it the fast vision model labels one frame every 30
 seconds and a median filter removes the single-frame spikes.
+
+The Perch rig has no GPS — mounted inside, usually against the headliner, it
+has no sky view worth relying on. So this works from what the rig does have:
+a barometer for altitude and vertical speed, and an IMU for bank, turn rate and
+the very distinctive vertical thump of a touchdown. Ground speed is used when a
+GPS-bearing camera supplies it, and inferred from vibration when it does not.
 """
 
 from __future__ import annotations
@@ -150,6 +156,53 @@ def _track_degrees(rows: list[dict[str, float]], grid: list[float]) -> list[Opti
     return _interpolate(rows2, "track", grid)
 
 
+def _motion_from_vibration(rows: list[dict[str, float]], grid: list[float]) -> list[float]:
+    """A 0-1 "something is happening" signal from accelerometer variance.
+
+    Without GPS there is no ground speed, so stationary-versus-rolling has to
+    come from the airframe itself. A parked aircraft with the engine running
+    still vibrates, but taxiing over ground adds a great deal more.
+    """
+    axes = [_interpolate(rows, key, grid) for key in ("accel_x", "accel_y", "accel_z")]
+    if not any(any(v is not None for v in axis) for axis in axes):
+        return [0.0] * len(grid)
+
+    magnitude = [
+        math.sqrt(sum((axis[i] or 0.0) ** 2 for axis in axes)) for i in range(len(grid))
+    ]
+    half = 5
+    energy: list[float] = []
+    for i in range(len(magnitude)):
+        lo, hi = max(0, i - half), min(len(magnitude), i + half + 1)
+        chunk = magnitude[lo:hi]
+        mean = sum(chunk) / len(chunk)
+        energy.append(math.sqrt(sum((v - mean) ** 2 for v in chunk) / len(chunk)))
+
+    ceiling = max(energy) or 1.0
+    return [min(1.0, v / ceiling) for v in energy]
+
+
+def _touchdown(
+    alts: list[Optional[float]], accel_z: list[Optional[float]], grid: list[float], field: float
+) -> Optional[int]:
+    """Index of the landing thump: the biggest vertical spike near the ground.
+
+    The most reliable single event an IMU gives you, and it anchors the highest
+    value phase in the debrief.
+    """
+    best, best_index = 0.0, None
+    for i, t in enumerate(grid):
+        agl = (alts[i] - field) if alts[i] is not None else 0.0
+        if agl > 40 or accel_z[i] is None:
+            continue
+        # Deviation from 1g, in whatever units the sensor reports.
+        rest = 9.81 if abs(accel_z[i]) > 5 else 1.0
+        spike = abs(abs(accel_z[i]) - rest) / rest
+        if spike > best:
+            best, best_index = spike, i
+    return best_index if best > 0.35 else None
+
+
 def phases_from_telemetry(
     rows: list[dict[str, float]], duration: float, window: int
 ) -> Phases:
@@ -161,6 +214,12 @@ def phases_from_telemetry(
     speeds = _interpolate(rows, "ground_speed", grid)
     alts = _interpolate(rows, "altitude", grid)
     tracks = _track_degrees(rows, grid)
+    banks = _interpolate(rows, "bank", grid)
+    turn_rates = _interpolate(rows, "turn_rate", grid)
+    accel_z = _interpolate(rows, "accel_z", grid)
+
+    has_speed = any(v is not None for v in speeds)
+    motion = [0.0] * len(grid) if has_speed else _motion_from_vibration(rows, grid)
 
     known_alts = [a for a in alts if a is not None]
     field = statistics.quantiles(known_alts, n=10)[0] if len(known_alts) >= 10 else (
@@ -169,14 +228,28 @@ def phases_from_telemetry(
 
     labels: list[str] = []
     for i, _t in enumerate(grid):
-        kt = (speeds[i] or 0.0) * MS_TO_KT
         agl = (alts[i] - field) if alts[i] is not None else 0.0
         fpm = _rate(alts, i, step) * MS_TO_FPM
-        turn = abs(_rate(tracks, i, step))  # degrees per second
 
-        if agl < 15 and kt < 1.5:
+        # Rolling: from GPS when there is one, otherwise from vibration.
+        if has_speed:
+            kt = (speeds[i] or 0.0) * MS_TO_KT
+            stationary, rolling = kt < 1.5, kt < 30
+        else:
+            stationary, rolling = motion[i] < 0.15, motion[i] < 0.55
+
+        # Turning: the gyro is better than a differentiated GPS track, and it
+        # is the only source when there is no GPS at all.
+        if turn_rates[i] is not None:
+            turn = abs(turn_rates[i])
+        elif banks[i] is not None:
+            turn = abs(banks[i]) / 3.0  # a rough rate-per-degree-of-bank stand-in
+        else:
+            turn = abs(_rate(tracks, i, step))
+
+        if agl < 15 and stationary:
             labels.append("ground")
-        elif agl < 15 and kt < 30:
+        elif agl < 15 and rolling:
             labels.append("taxi")
         elif agl < 60:
             labels.append("takeoff" if fpm > -100 else "landing")
@@ -190,9 +263,22 @@ def phases_from_telemetry(
             labels.append("cruise")
 
     labels = median_filter(labels, window)
+
+    # The touchdown thump is the single most reliable event the IMU gives, so
+    # let it override the smoothed guess around the moment it happened.
+    touch = _touchdown(alts, accel_z, grid, field)
+    if touch is not None:
+        for i in range(max(0, touch - 5), min(len(labels), touch + 10)):
+            labels[i] = "landing"
     labels = _mark_circuits(labels, tracks, alts, field, step)
     spans = mark_shutdown(to_spans(grid, labels, duration))
-    return Phases(source="telemetry", spans=spans, note=f"derived from {len(rows)} GPS samples")
+    sources = "GPS" if has_speed else "barometer and IMU"
+    return Phases(
+        source="telemetry",
+        spans=spans,
+        note=f"derived from {len(rows)} samples via {sources}"
+        + (", touchdown detected" if touch is not None else ""),
+    )
 
 
 def _mark_circuits(
@@ -342,8 +428,9 @@ def run(ctx: RunContext) -> StageRecord:
     # Phases come from the wide view: the panel sensor cannot see the ground.
     frames = sample_stage.load_frames(ctx.frames_dir, "scene")
 
-    usable = [r for r in rows if "ground_speed" in r or "altitude" in r]
-    if len(usable) >= 10:
+    channels = telemetry_stage.channels(rows)
+    usable = [r for r in rows if "altitude" in r or "ground_speed" in r]
+    if channels.can_segment and len(usable) >= 10:
         phases = phases_from_telemetry(
             usable, probe.duration, ctx.config.segment.median_filter_window
         )

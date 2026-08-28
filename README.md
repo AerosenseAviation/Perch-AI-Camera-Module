@@ -101,7 +101,7 @@ of two separate cameras produces trustworthy timestamps.
 ## The nine stages
 
 Each stage writes its output to disk and reads only what the stage before it
-wrote, so any one can be re-run alone with `debrief stage`.
+wrote, so any one can be re-run alone with `perch stage`.
 
 | # | Stage | Writes | Model |
 |---|-------|--------|-------|
@@ -161,12 +161,53 @@ appears at the top of the debrief. It belongs in the app as a pre-flight check.
 An unreadable panel, or an aim check that could not run, disables `panel` and
 `crosscheck`. **It fails closed:** no verified sensor, no numbers.
 
+The hardware this is heading for is speced in [docs/dev-rig-bom.md](docs/dev-rig-bom.md).
+
+## Sensors: what each one is allowed to say
+
+The rig mounts inside — usually against the headliner, looking down and forward
+— so **there is no GPS**. No usable sky view, and it would only ever work in
+some airframes. That is a deliberate omission, not a gap.
+
+It matters more than it sounds. Telemetry authorises numeric claims, and an
+intermittent GPS with multipath inside a metal cabin does not fail loudly — it
+produces *plausible bad fixes*, which would then license exactly the invented
+airspeed the validator exists to prevent. A reliable no beats an unreliable yes.
+
+So the pipeline tracks what telemetry actually **measured**, not merely that it
+exists:
+
+| Channel | From | Authorises |
+|---|---|---|
+| `position` | GPS only | ground speed, track, leg lengths |
+| `altitude` | barometer or GPS | phase segmentation, vertical speed |
+| `attitude` | IMU | bank angle, pitch |
+| `acceleration` | IMU | g load, turn rate, touchdown |
+
+An IMU can vouch for "the steepest bank was 45°" and for nothing whatsoever
+about airspeed. That distinction is enforced in `validate.py`, not left to the
+prompt.
+
+The barometer earns its place: it is about $10, needs no antenna, works in any
+unpressurised cabin, and restores altitude and vertical speed — which is all
+the segmenter used GPS altitude for. Combined with the IMU, phases stay local
+and free instead of falling back to paid vision calls.
+
+The IMU earns its place twice over. Bank angle and g become *measured* rather
+than guessed from a tilted horizon. And the vertical thump of a touchdown is
+the single most reliable event either sensor produces — it anchors the landing
+phase to the second, which is the highest-value phase in the debrief.
+
+Ground speed is the one real loss, and it barely stings: the ASI is in frame,
+and indicated airspeed is the number a pilot actually cares about. Groundspeed
+is IAS plus wind, and wrong for nearly every observation worth making.
+
 ## The module table
 
 | Module | Reads | Requires | Reports |
 |---|---|---|---|
 | `attitude` | scene | horizon visible | pitch and bank changes, steepest bank, wings-level quality |
-| `pattern` | scene | outside terrain or telemetry | circuit shape, leg lengths, turn consistency |
+| `pattern` | scene | outside terrain or telemetry | circuit shape, turn consistency — weak without GPS |
 | `landing` | scene | forward view and runway visible | flare, float, drift, bounce, touchdown character |
 | `panel` | **panel** | instruments in frame and legible | readings, configuration changes, warning lights |
 | `crosscheck` | **both** | both streams, legible instruments | what the instruments said against what the world was doing |
@@ -204,7 +245,9 @@ The validator (`perch/validate.py`) rejects an observation when:
 2. it cites no timestamp at all;
 3. it states a number with no readable panel and no telemetry;
 4. its confidence is `low` and its interest is `safety`;
-5. **it states a number at a moment the instrument sensor did not cover.**
+5. it states a number at a moment the instrument sensor did not cover;
+6. **it states an angle or a g figure with no motion sensor and no readable
+   attitude indicator** — a tilted horizon in a frame is not a protractor.
 
 Rule 5 is new with the second sensor and it is the important one. Readable
 instruments are permission to report what was on the glass at a given instant —

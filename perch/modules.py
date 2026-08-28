@@ -86,7 +86,7 @@ MODULE_SPECS: tuple[ModuleSpec, ...] = (
         name="pattern",
         requires="outside terrain or telemetry",
         reports="circuit shape, leg lengths, turn consistency",
-        tip="Give the wide sensor a view of the ground, or record GPS telemetry.",
+        tip="Give the wide sensor a view of the ground. Without GPS the circuit shape can only be inferred from what the terrain does in frame.",
         phases=("circuit", "approach", "manoeuvre", "cruise", "takeoff", "landing"),
         test=lambda vp, c: vp.visible.outside_terrain or c.has_telemetry,
     ),

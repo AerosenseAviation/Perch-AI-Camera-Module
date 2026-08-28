@@ -224,3 +224,54 @@ def test_panel_coverage_helper():
     # Any one cited timestamp being covered is enough.
     assert PANEL_SENSOR.panel_covers([500.0, 100.0]) is True
     assert NO_INSTRUMENTS.has_panel_stream is False
+
+
+# --- what the sensors are allowed to vouch for ------------------------------
+
+IMU_ONLY = ValidationContext(
+    duration=600.0, panel_enabled=False, telemetry_attitude=True
+)
+GPS = ValidationContext(duration=600.0, panel_enabled=False, telemetry_position=True)
+
+
+def test_an_imu_does_not_authorise_an_airspeed():
+    """The bug this catches: 'there are telemetry rows' used to mean 'GPS'."""
+    assert IMU_ONLY.numbers_allowed is False
+    assert RULE_UNSUPPORTED_NUMBER in rules_for(
+        obs(claim="The aircraft crosses the fence at 65 knots."), IMU_ONLY
+    )
+
+
+def test_an_imu_does_authorise_bank_and_g():
+    assert IMU_ONLY.attitude_numbers_allowed is True
+    assert rules_for(obs(claim="The steepest bank of the flight is 45 degrees."), IMU_ONLY) == []
+    assert rules_for(obs(claim="The turn peaks at 2.1g."), IMU_ONLY) == []
+
+
+def test_a_camera_alone_cannot_state_an_angle():
+    """A tilted horizon in a frame is not a protractor."""
+    from perch.validate import RULE_ATTITUDE_NUMBER_WITHOUT_SENSOR
+
+    broken = rules_for(obs(claim="The aircraft banks 45° in the turn."), NO_INSTRUMENTS)
+    assert RULE_ATTITUDE_NUMBER_WITHOUT_SENSOR in broken
+
+
+def test_a_readable_panel_authorises_an_angle():
+    """An attitude indicator and a flap gauge are both readable off the panel."""
+    assert rules_for(obs(claim="Flap is selected to 10 degrees."), PANEL_READABLE) == []
+
+
+def test_relative_attitude_language_is_always_fine():
+    assert rules_for(obs(claim="The horizon rolls to a third of the way to vertical.")) == []
+
+
+def test_gps_still_authorises_a_speed():
+    assert GPS.numbers_allowed is True
+    assert rules_for(obs(claim="Ground speed is 45 metres per second."), GPS) == []
+
+
+def test_legacy_has_telemetry_still_reads_as_gps():
+    """Old callers passing has_telemetry=True keep their meaning."""
+    legacy = ValidationContext(duration=600.0, panel_enabled=False, has_telemetry=True)
+    assert legacy.telemetry_position is True
+    assert legacy.numbers_allowed is True
