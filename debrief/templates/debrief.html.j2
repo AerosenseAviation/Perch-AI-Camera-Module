@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Debrief — {{ probe.filename }}</title>
+<style>
+  :root {
+    --bg: #f6f5f2;
+    --panel: #ffffff;
+    --ink: #1c1c1a;
+    --muted: #6c6a64;
+    --line: #dedbd3;
+    --accent: #2f5d50;
+    --warn: #8a5a2b;
+    --safety: #8c3b30;
+    --skill: #2f5d50;
+    --character: #4a4a86;
+    --trivia: #6c6a64;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16161a;
+      --panel: #1e1e23;
+      --ink: #eceae4;
+      --muted: #9b988f;
+      --line: #33333b;
+      --accent: #7fc0ab;
+      --warn: #d3a06a;
+      --safety: #e28a7c;
+      --skill: #7fc0ab;
+      --character: #a3a3e0;
+      --trivia: #9b988f;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 2rem 1rem 4rem;
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          "Helvetica Neue", Arial, sans-serif;
+  }
+  .wrap { max-width: 46rem; margin: 0 auto; }
+  header { border-bottom: 2px solid var(--line); padding-bottom: 1.25rem; margin-bottom: 2rem; }
+  h1 { font-size: 1.75rem; margin: 0 0 .35rem; letter-spacing: -0.01em; }
+  h2 {
+    font-size: .82rem; text-transform: uppercase; letter-spacing: .09em;
+    color: var(--muted); margin: 2.5rem 0 .85rem; font-weight: 600;
+  }
+  .meta { color: var(--muted); font-size: .9rem; }
+  .meta span + span::before { content: " · "; }
+  .story { font-size: 1.08rem; }
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 1rem 1.15rem; margin-bottom: 1rem;
+  }
+  .highlight { padding: 0; overflow: hidden; }
+  .highlight img { display: block; width: 100%; height: auto; }
+  .highlight .body { padding: .9rem 1.15rem 1.05rem; }
+  .highlight h3 { margin: 0 0 .3rem; font-size: 1.02rem; }
+  .stamp {
+    display: inline-block; font-variant-numeric: tabular-nums;
+    font-size: .78rem; color: var(--accent); font-weight: 600;
+    letter-spacing: .03em; margin-bottom: .2rem;
+  }
+  ul.plain { list-style: none; margin: 0; padding: 0; }
+  ul.plain li {
+    border-left: 3px solid var(--line); padding: .1rem 0 .1rem .9rem;
+    margin-bottom: .8rem;
+  }
+  ul.blocked li { color: var(--muted); }
+  .tip {
+    background: var(--panel); border: 1px solid var(--line);
+    border-left: 3px solid var(--warn); border-radius: 8px;
+    padding: .9rem 1.15rem;
+  }
+  table { border-collapse: collapse; width: 100%; font-size: .86rem; }
+  th, td { text-align: left; padding: .45rem .6rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: .76rem; text-transform: uppercase; letter-spacing: .06em; }
+  td.t { font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--accent); }
+  .scroll { overflow-x: auto; }
+  .tag {
+    display: inline-block; font-size: .7rem; text-transform: uppercase;
+    letter-spacing: .05em; font-weight: 700; padding: .1rem .4rem;
+    border-radius: 4px; border: 1px solid currentColor;
+  }
+  .tag.safety { color: var(--safety); }
+  .tag.skill { color: var(--skill); }
+  .tag.character { color: var(--character); }
+  .tag.trivia { color: var(--trivia); }
+  details summary { cursor: pointer; color: var(--muted); font-size: .9rem; }
+  footer {
+    margin-top: 3.5rem; padding-top: 1.25rem; border-top: 1px solid var(--line);
+    color: var(--muted); font-size: .84rem;
+  }
+  footer .disclaimer { font-style: italic; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>{{ probe.filename }}</h1>
+  <p class="meta">
+    <span>{{ duration_clock }}</span>
+    <span>{{ probe.width }}&times;{{ probe.height }}</span>
+    <span>{{ viewpoint.mount }} mount</span>
+    <span>{{ viewpoint.quality.lighting }} light</span>
+    {% if phase_list %}<span>{{ phase_list }}</span>{% endif %}
+  </p>
+</header>
+
+<h2>Flight story</h2>
+<p class="story">{{ debrief.flight_story }}</p>
+
+{% if debrief.highlights %}
+<h2>Highlights</h2>
+{% for h in debrief.highlights %}
+<div class="card highlight">
+  {% if h.image %}<img src="{{ h.image }}" alt="Frame at {{ h.clock }}">{% endif %}
+  <div class="body">
+    <span class="stamp">{{ h.clock }}</span>
+    <h3>{{ h.title }}</h3>
+    <p style="margin:0">{{ h.text }}</p>
+  </div>
+</div>
+{% endfor %}
+{% endif %}
+
+{% if debrief.takeaways %}
+<h2>Takeaways</h2>
+<ul class="plain">
+  {% for item in debrief.takeaways %}<li>{{ item }}</li>{% endfor %}
+</ul>
+{% endif %}
+
+{% if debrief.could_not_see %}
+<h2>What I could not see</h2>
+<ul class="plain blocked">
+  {% for item in debrief.could_not_see %}<li>{{ item }}</li>{% endfor %}
+</ul>
+{% endif %}
+
+{% if debrief.next_time %}
+<h2>Next time</h2>
+<p class="tip">{{ debrief.next_time }}</p>
+{% endif %}
+
+{% if observations %}
+<h2>Every observation</h2>
+<details>
+  <summary>{{ observations|length }} observations kept by the validator</summary>
+  <div class="scroll">
+    <table>
+      <thead>
+        <tr><th>Time</th><th>Module</th><th>Phase</th><th>Observation</th><th>Source</th><th>Interest</th></tr>
+      </thead>
+      <tbody>
+      {% for o in observations %}
+        <tr>
+          <td class="t">{{ o.clock }}</td>
+          <td>{{ o.module }}</td>
+          <td>{{ o.phase }}</td>
+          <td>{{ o.claim }}</td>
+          <td>{{ o.provenance }} / {{ o.confidence }}</td>
+          <td><span class="tag {{ o.interest }}">{{ o.interest }}</span></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</details>
+{% endif %}
+
+<footer>
+  <p>
+    Built from {{ frame_count }} sampled frames{% if has_telemetry %}, GPS telemetry{% endif %}{% if has_transcript %} and a cockpit audio transcript{% endif %}.
+    Modules run: {{ enabled_modules }}.
+    {% if rejected_count %}The validator discarded {{ rejected_count }} proposed observations.{% endif %}
+  </p>
+  <p class="disclaimer">
+    This debrief is an automated observation of video footage. It is not flight
+    instruction and it is not a substitute for a qualified instructor.
+  </p>
+</footer>
+
+</div>
+</body>
+</html>

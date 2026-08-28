@@ -1,0 +1,72 @@
+# Default configuration. Copy this to ./debrief.toml and edit to override.
+# Lookup order: $DEBRIEF_CONFIG, ./debrief.toml, ~/.config/debrief/debrief.toml,
+# then this packaged file.
+
+[models]
+# Fast, low-cost vision model for the probe passes (stages 5 and 6).
+fast = "claude-haiku-4-5"
+# Stronger model for the analysis and compose passes (stages 7 and 8).
+strong = "claude-opus-5"
+
+[paths]
+runs_root = "runs"
+# Model-response cache. Shared across runs so prompt iteration is free.
+cache_dir = "runs/.cache"
+
+[sample]
+interval_seconds = 3.0
+max_frames = 400
+long_edge = 768
+jpeg_quality = 80
+
+[audio]
+enabled = true
+transcribe = true
+sample_rate = 16000
+whisper_model = "base"
+whisper_compute_type = "int8"
+feature_hz = 1.0
+
+[segment]
+vision_interval_seconds = 30.0
+median_filter_window = 5
+max_frames_per_call = 20
+
+[capability]
+frame_count = 8
+max_tokens = 2000
+
+[analyse]
+frames_per_batch = 20
+max_tokens = 8000
+max_transcript_chars = 6000
+telemetry_summary_rows = 24
+
+[compose]
+max_tokens = 8000
+max_observations = 400
+
+# Cost per million tokens. Update when Anthropic pricing changes.
+[pricing."claude-opus-5"]
+input = 5.0
+output = 25.0
+
+[pricing."claude-sonnet-5"]
+input = 2.0
+output = 10.0
+
+[pricing."claude-haiku-4-5"]
+input = 1.0
+output = 5.0
+
+[pricing."claude-fable-5"]
+input = 10.0
+output = 50.0
+
+[pricing."claude-opus-4-8"]
+input = 5.0
+output = 25.0
+
+[pricing."claude-sonnet-4-6"]
+input = 3.0
+output = 15.0

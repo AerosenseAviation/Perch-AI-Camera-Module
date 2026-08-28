@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flight-debrief"
+version = "0.4.0"
+description = "Post-flight debrief from cockpit and action-camera video."
+requires-python = ">=3.11"
+dependencies = [
+    "anthropic>=1.0",
+    "pydantic>=2.6",
+    "typer>=0.12",
+    "jinja2>=3.1",
+    "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+transcribe = ["faster-whisper>=1.0"]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+debrief = "debrief.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["debrief*"]
+
+[tool.setuptools.package-data]
+debrief = ["prompts/*.md", "prompts/modules/*.md", "templates/*.j2", "debrief.default.toml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]
