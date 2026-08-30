@@ -13,12 +13,19 @@ This repository is the software. It runs today against any two video files, so
 the concept can be proven on a taped-up pair of cameras long before there is a
 product to put them in.
 
-The second sensor is the whole bet. Everything defensive in this codebase exists
-because a wide shot cannot resolve a needle: the `panel` module used to be
-disabled on most flights, and the validator threw away every claim containing an
-airspeed. With instruments in frame, numbers stop being forbidden and become the
-product — so the rules change from *never state a number* to *only state one you
-read at a moment the sensor actually covered*.
+The bet is not the instruments. A debrief that only works when the narrow sensor
+can resolve a needle is a dashcam with OCR; Perch has to be worth reading from
+whatever mount the aircraft allows, on what it can see and hear alone. The second
+sensor sharpens the debrief when the aim is good — it is what turns "the power
+comes back" into "the power comes back at 2,100 rpm" — but it never gates it.
+
+That is why the defensive machinery in this codebase is built around authority
+rather than around the panel. A wide shot cannot resolve a needle, an IMU cannot
+vouch for an airspeed, and a camera is not a protractor. Each sensor licenses a
+particular kind of claim and nothing more, so the rule is not *never state a
+number* but *only state one some sensor actually measured, at a moment it
+actually covered*. Everything else falls back to what the scene sensor saw and
+the microphone heard, which is the case the product is really being judged on.
 
 ## Install
 
@@ -162,6 +169,8 @@ An unreadable panel, or an aim check that could not run, disables `panel` and
 `crosscheck`. **It fails closed:** no verified sensor, no numbers.
 
 The hardware this is heading for is speced in [docs/dev-rig-bom.md](docs/dev-rig-bom.md).
+The plan for getting a physical prototype built and flown is in
+[docs/poc-build-manual.md](docs/poc-build-manual.md).
 
 ## Sensors: what each one is allowed to say
 
@@ -351,7 +360,7 @@ pip install -e '.[dev]'
 pytest
 ```
 
-168 tests. The suite generates its own clips with ffmpeg and stubs the model, so
+182 tests. The suite generates its own clips with ffmpeg and stubs the model, so
 it runs in CI with no API key and no spend. Tests needing ffmpeg skip themselves
 when it is not installed.
 
