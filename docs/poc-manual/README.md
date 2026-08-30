@@ -10,5 +10,6 @@ the software in this repository.
 
 1. [The charter](01-the-charter.md)
 2. [The optical bench test](02-the-optical-bench-test.md)
+3. [Compute and power](03-compute-and-power.md)
 
 Steps are written and approved one at a time; each one is a page.

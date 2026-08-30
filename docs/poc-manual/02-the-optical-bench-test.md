@@ -229,4 +229,4 @@ modules during the bench. If it is not, condition 3 fails and the design changes
 
 ---
 
-[← Step 1: The charter](01-the-charter.md) · [Contents](README.md)
+[← Step 1: The charter](01-the-charter.md) · [Contents](README.md) · [Step 3: Compute and power →](03-compute-and-power.md)
