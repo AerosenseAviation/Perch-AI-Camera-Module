@@ -10,69 +10,63 @@ be switched on in an aircraft and left alone for two hours.
 production device is almost certainly not what the PoC runs on, and designing it
 now would be guessing ahead of the measurements this step produces.
 
-## Selection on the device, inference off it
+## The device captures. The cloud decides.
 
-The line is not "the device does no analysis". It is drawn by what each side
-costs in watts and in API spend, and it lands in a specific place: **the device
-decides which moments are worth keeping. It never decides what they mean.**
+**The device never judges what matters.** It captures as much as it can, at the
+best resolution it can, and hands all of it over. Every decision about what is
+interesting happens off the device.
 
-Three architectures were considered.
+The obvious argument is the NPU — there isn't one, so anything clever costs CPU,
+watts and heat we cannot spare. The real argument is worse than that: **a
+judgement made in the air cannot be revisited.** A frame the device discards is
+gone. No amount of cloud software recovers it, the flight cannot be flown again,
+and the thing we discarded is exactly the kind of thing we do not yet know how to
+recognise — which is the entire point of the project. Cloud software can get
+smarter every week against footage already captured. Firmware that threw the
+footage away has permanently capped how smart the product can become.
 
-**A — Capture everything at a fixed interval, decide nothing.** A 2-hour flight
-is ~3,600 panel frames. Everything is stored, everything syncs, and a cheap scan
-pass at 1024 px then finds the moments worth reading at full resolution.
+So the hardware's job is narrow and absolute: **capture everything, lose
+nothing.**
 
-**B — Deterministic selection on the device.** Frame-to-frame difference on a
-downscaled panel crop, plus IMU triggers (attitude and g excursions, the vertical
-spike of a touchdown, altitude rate changes) and audio triggers (power changes,
-gear and flap, alert tones). Only moments that changed are kept at full quality.
+### What that costs
 
-**C — A vision model on the device.** Classify or read the panel locally, upload
-conclusions.
+At full sensor resolution on both channels, a 2-hour flight is roughly:
 
-**C is rejected, and not narrowly.** The Pi 5 has no NPU, so a model runs on CPU,
-and CPU is exactly the budget we cannot spend — every watt burnt is battery gone
-and heat added in a box we are already struggling to cool. It also duplicates,
-worse, what the frontier model does well. On-device ML is a production
-optimisation for a device with silicon designed for it, not a PoC decision.
+| Channel | Interval | Frames | Size |
+|---|---|---|---|
+| Panel, 11.9 MP | 2 s | 3,600 | ~10.8 GB |
+| Scene, 11.9 MP | 3 s | 2,400 | ~7.2 GB |
+| Audio + telemetry | — | — | ~31 MB |
+| **Total** | | **6,000** | **~18 GB** |
 
-**B wins over A**, and the interesting part is that it wins on all three axes:
+**Storage is not the constraint.** A 512 GB card is about $40 and holds 25
+flights — well past the 10-flight buffer. Cards are the cheapest component in the
+device and the last place to economise.
 
-| | A: capture everything | B: select on device |
-|---|---|---|
-| Frames stored per flight | ~3,600 | ~900 |
-| Storage per flight | ~390 MB | ~110 MB |
-| Sync time | ~2.5 min | ~45 s |
-| Frames sent to the model | 500 scan @ 1024 + ~100 read @ 1900 | ~250 read @ 1900 |
-| API cost per flight, panel only | ~$5.90 | ~$6.00 |
-| Frames encoded on device | 3,600 | ~900 |
+**Moving the data is the constraint.** 18 GB over wifi at a realistic 25 Mbit/s
+is an hour and a half. That is not a sync, and no pilot will wait for it. See
+below for how the flight actually gets off the device.
 
-API cost comes out roughly level — B sends fewer frames but every one at full
-resolution, so the two effects cancel. What B actually buys is that **every frame
-sent is a frame worth sending**, the scan pass disappears as a moving part, sync
-drops to well under a minute, and two thirds of the full-resolution JPEG encoding
-never happens. That last one is the battery argument: encoding a 12 MP frame is
-the single most expensive thing the CPU does in flight, and B does it a third as
-often.
+### Discarding by judgement is banned. Reducing by config is not.
 
-The selection itself is nearly free. A mean-absolute-difference on a downscaled
-greyscale crop is microseconds, and the IMU and audio triggers are threshold
-comparisons on data we are already reading. This is classical signal processing,
-not inference — deterministic, debuggable, and cheap enough to be invisible in
-the power budget.
+There is a distinction worth being precise about, because it is the difference
+between a rule and a straitjacket.
 
-**One rule constrains it, and it comes from Step 1.** The device must never
-create a blind window. Selection raises the sampling rate at interesting moments;
-it must never drop below a **guaranteed baseline of one frame every 10 seconds**,
-whatever the difference metric says. Criterion 4 of the charter is zero false
-omissions, and the omission rule only holds if the pipeline can distinguish "the
-pilot did not do this" from "the device was not looking". A device that discards
-a quiet stretch entirely destroys that distinction. Boring stretches get sampled
-sparsely. They are never skipped.
+- **Discarding by judgement** — "this frame looks boring, drop it" — is banned
+  outright, on the device, forever. It is content-dependent, unrepeatable, and
+  destroys information.
+- **Reducing uniformly by configuration** — a capture interval, a resolution, a
+  crop region the pilot set once when aiming — is not a judgement. It applies
+  identically to every frame, it is a number in a config file, and it is
+  reviewable and changeable between flights.
 
-Everything past selection — phases, capability, analysis, composition — runs
-off-device from the synced flight. The device's contract is to produce a
-directory of frames, audio, telemetry and an index. Nothing more.
+`interval_seconds`, `long_edge` and the install crop are all already the second
+kind. They are dials we set deliberately, not calls the device makes.
+
+The rule that follows: **the card holds everything, at full resolution, always.**
+Any reduction happens on the way to the cloud, never on the way to the card. The
+card is the archive, and the archive is what lets a smarter pipeline be re-run
+against flight 3 a year after flight 3 happened.
 
 ## Power: a battery, not the aircraft
 
@@ -105,26 +99,31 @@ biggest levers are things we choose, not things the board imposes.
 
 | Item | Estimate |
 |---|---|
-| Pi 5, underclocked, capture and selection | 4–6 W |
+| Pi 5, capture and full-resolution encode | 5–8 W |
 | Two camera sensors | 0.5–1 W |
 | IMU, barometer, microphone | <0.1 W |
 | Wifi — **off in flight**, on for sync only | 0 W / ~1 W |
 | Fan — thermostatic, duty-cycled | 0–1 W |
-| **In flight** | **~5–7 W** |
+| **In flight** | **~6–9 W** |
 
 Three levers, in order of size:
 
 - **Wifi off in flight.** The access point is for aiming and for sync, and both
   happen on the ground. Leaving it up costs around a sixth of the total budget
   for nothing.
-- **Underclock.** The workload is light and the deadline is a frame every two
-  seconds. Clock speed buys us nothing and costs watts and heat.
-- **Encode fewer frames**, which is what on-device selection already does.
+- **Underclock, within reason.** The deadline is a frame every two seconds, not
+  a millisecond. Trim the clock to whatever still meets criterion 1 with margin —
+  but capture rate wins any argument with power, because a dropped frame is the
+  one thing this design refuses to do.
+- **Nothing else.** Encoding every frame at full resolution is the CPU load,
+  and it is not negotiable — it is the job. Six thousand full-resolution JPEGs
+  over two hours is the workload the board, the battery and the enclosure all
+  have to be sized against, which is why criterion 7 measures it rather than
+  estimating it.
 
-At 6 W, a 3-hour target needs 18 Wh. A 20,000 mAh bank is ~74 Wh nominal and well
-over 50 Wh usable — several times the margin needed. Once the real draw is
-measured, a 10,000 mAh bank is likely enough and halves the weight, which matters
-for a device hanging off a ball joint.
+At 8 W, a 3-hour target needs 24 Wh. A 20,000 mAh bank is ~74 Wh nominal and well
+over 50 Wh usable — twice the margin needed. Size it down only once the real
+draw is measured, since weight on a ball joint is its own constraint.
 
 
 ## The board
@@ -231,17 +230,22 @@ temperature logged for two hours. Not on a bench in an air-conditioned room.
 
 ## Getting the flight off the device
 
-The device runs its own wifi access point. The phone connects directly to it and
-pulls the flight — no hangar network, no internet, nothing to configure at an
-unfamiliar airfield.
+18 GB does not go over wifi, so for the PoC it does not try to.
 
-On-device selection cuts a flight to roughly 110 MB, so at a realistic
-25 Mbit/s over the Pi's 5 GHz radio a sync takes about 45 seconds — down from the
-~2.5 minutes Step 2 budgeted for storing everything. It finishes before the
-pilot has finished packing up, and a 10-flight buffer now fits in about 1.1 GB.
+**Bulk data comes off over USB-C, or by pulling the card.** The Pi 5 has USB 3,
+so a flight moves to a laptop in about three minutes at realistic speeds, and a
+card reader is faster still. The pipeline runs on that laptop anyway during the
+PoC, so this is the short path, not a workaround.
 
-The same access point carries the **live view for aiming** from Step 2: an MJPEG
-stream to the phone's browser, install-time only.
+**The device's wifi access point stays**, and it does the jobs that need to
+happen at the aircraft: the **live view for aiming** from Step 2, device status
+and storage remaining, and delivering the finished debrief back to the phone.
+None of those move much data.
+
+Bulk sync to a phone is a **production problem, deferred deliberately.** It
+depends on how much data the cloud turns out to need, which is one of the things
+the PoC exists to find out. Designing a phone-sync path now would mean guessing
+that number and building firmware around the guess.
 
 ## When it starts recording
 
@@ -264,25 +268,26 @@ On top of the sensors chosen in Step 2:
 |---|---|
 | Raspberry Pi 5, 8 GB | $80 |
 | Active cooler | $5 |
-| 256 GB A2 microSD | $25 |
+| 512 GB A2 microSD | $40 |
 | USB-C power bank, 20,000 mAh | $40 |
 | BNO085 IMU | $25 |
 | BMP390 barometer | $12 |
 | I²S MEMS microphone | $8 |
 | Cables, headers, button, LED | $20 |
-| **Total** | **~$215** |
+| **Total** | **~$230** |
 
 ## Pass criteria
 
 | # | Criterion | Threshold |
 |---|---|---|
 | 1 | Sustained capture | Both sensors at their target intervals, full resolution, 2 h, zero dropped frames |
-| 1b | No blind window | Baseline coverage holds at ≥1 frame per 10 s for the whole flight, whatever selection decides |
+| 1b | Nothing dropped | Every scheduled frame reaches the card, at full resolution, for the whole flight |
 | 2 | Endurance | ≥3 h continuous capture on one charge |
 | 3 | Power-loss integrity | 20 hard power cuts during capture: no unbootable card, no loss beyond the frame being written |
 | 4 | Thermal | No throttling in a closed light-coloured enclosure at 45 °C ambient under full workload for 2 h, in sun |
 | 5 | Time to recording | ≤60 s from switch-on to first frame stored |
-| 6 | Sync | A full flight transfers and verifies on the phone in ≤2 min |
+| 6 | Offload | A full flight (~18 GB) transfers and verifies to a laptop in ≤5 min over USB-C |
+| 6b | Buffer | 10 flights fit on the card with room to spare, and the oldest is dropped, not the newest refused |
 | 7 | Draw measured | Average and peak watts logged, so the production supply can be sized from data |
 
 Criterion 7 is an output, not a gate — it is what the production power design
@@ -311,6 +316,11 @@ the resource we are also trying to protect: cooling draws power, power is
 battery, and a bigger battery is more weight on a ball joint. The cheap
 mitigations — a light enclosure, an aluminium chassis, a lower clock — are cheap
 precisely because they break that loop instead of feeding it.
+
+Capturing everything makes this harder, not easier — six thousand
+full-resolution encodes is real sustained CPU load, and it is load we have chosen
+not to reduce. That is the right trade, and it means the thermal budget has to
+absorb it rather than the capture rate giving way.
 
 Log core temperature on every flight from here on, not just during the bench
 test, so the failure is always visible in the data rather than inferred from a

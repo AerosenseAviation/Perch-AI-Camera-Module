@@ -203,9 +203,10 @@ At 1.5× linear margin (1536 px stored):
 | 10-flight buffer | 2.5 GB | 4.5 GB |
 | Sync per flight | ~80 s | ~2.5 min |
 
-Revised down again in [Step 3](03-compute-and-power.md): selecting frames on the
-device rather than storing every one brings a flight to ~110 MB and a sync to
-~45 s. The 1.5x margin below still applies — to the frames that are kept.
+Superseded by [Step 3](03-compute-and-power.md), which settles that the device
+captures everything at full sensor resolution and never judges what to keep — so
+the card holds ~18 GB per flight, and the numbers above describe what is *sent to
+the model*, not what is stored.
 
 A 256 GB card is about $20, so the card is not the constraint — sync time is, and
 2.5 minutes while the pilot packs up is acceptable.
