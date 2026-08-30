@@ -30,22 +30,38 @@ nothing.**
 
 ### What that costs
 
-At full sensor resolution on both channels, a 2-hour flight is roughly:
+The frame count comes straight from the capture intervals already in the
+pipeline config — `[sample] interval_seconds = 3.0` for the scene channel and
+`[sample.panel] interval_seconds = 2.0` for the panel:
+
+```
+panel:  7,200 s / 2 s = 3,600 frames
+scene:  7,200 s / 3 s = 2,400 frames
+                        -----
+                        6,000 frames per 2-hour flight
+```
+
+At full sensor resolution (11.9 MP, ~3 MB per JPEG) that is:
 
 | Channel | Interval | Frames | Size |
 |---|---|---|---|
-| Panel, 11.9 MP | 2 s | 3,600 | ~10.8 GB |
-| Scene, 11.9 MP | 3 s | 2,400 | ~7.2 GB |
+| Panel | 2 s | 3,600 | ~10.8 GB |
+| Scene | 3 s | 2,400 | ~7.2 GB |
 | Audio + telemetry | — | — | ~31 MB |
 | **Total** | | **6,000** | **~18 GB** |
+
+Both intervals are dials, not physics. Halving the panel rate halves the panel
+storage. They are set where they are because a needle swings in a second and
+terrain does not, and the bench in Step 2 may move them.
 
 **Storage is not the constraint.** A 512 GB card is about $40 and holds 25
 flights — well past the 10-flight buffer. Cards are the cheapest component in the
 device and the last place to economise.
 
 **Moving the data is the constraint.** 18 GB over wifi at a realistic 25 Mbit/s
-is an hour and a half. That is not a sync, and no pilot will wait for it. See
-below for how the flight actually gets off the device.
+is an hour and a half, and no pilot will wait for that — nor should they ever
+handle a card. The answer is that the archive does not move; a uniform reduction
+of it does. See *Getting the flight off the device* below.
 
 ### Discarding by judgement is banned. Reducing by config is not.
 
@@ -230,22 +246,64 @@ temperature logged for two hours. Not on a bench in an air-conditioned room.
 
 ## Getting the flight off the device
 
-18 GB does not go over wifi, so for the PoC it does not try to.
+**Pulling a card is not a product.** Neither is asking a pilot to find a laptop.
+The flow has to be: device → phone → app → cloud, with nothing to think about.
+That constraint decides the architecture, so it is worth stating before the
+numbers.
 
-**Bulk data comes off over USB-C, or by pulling the card.** The Pi 5 has USB 3,
-so a flight moves to a laptop in about three minutes at realistic speeds, and a
-card reader is faster still. The pipeline runs on that laptop anyway during the
-PoC, so this is the short path, not a workaround.
+18 GB does not go to a phone, and it certainly does not go from a phone to the
+cloud on someone's data plan. But that is the *archive* number, and the archive
+does not need to move. Three tiers:
 
-**The device's wifi access point stays**, and it does the jobs that need to
-happen at the aircraft: the **live view for aiming** from Step 2, device status
-and storage remaining, and delivering the finished debrief back to the phone.
-None of those move much data.
+**1. The card holds everything.** ~18 GB, full resolution, every frame. It never
+moves in normal use. This is the tier that guarantees nothing is ever lost.
 
-Bulk sync to a phone is a **production problem, deferred deliberately.** It
-depends on how much data the cloud turns out to need, which is one of the things
-the PoC exists to find out. Designing a phone-sync path now would mean guessing
-that number and building firmware around the guess.
+**2. The sync set goes to the phone.** A uniform reduction of *all* of it — every
+frame, at a configured resolution, with no gaps and no judgement about which
+moments matter. Panel at 1536 px and scene at 1024 px is about **2 GB**:
+
+| Channel | Frames | Resolution | Size |
+|---|---|---|---|
+| Panel | 3,600 | 1536 px | ~1.6 GB |
+| Scene | 2,400 | 1024 px | ~0.4 GB |
+| Audio + telemetry | — | — | ~31 MB |
+| **Sync set** | **6,000** | | **~2 GB** |
+
+Over USB-C that is well under a minute. Phone to cloud is a background upload on
+wifi, and the app defaults to wifi-only so nobody discovers Perch through their
+data bill.
+
+**3. The cloud asks for detail when it wants it.** Having analysed the sync set,
+the pipeline can request specific frames back at full resolution — "frames 1042
+to 1058, uncropped" — and the device still has them. A targeted pull is tens of
+megabytes, not gigabytes.
+
+This is what "the cloud decides" actually means in the data path. The device
+never chooses which moments matter; it just serves whatever is asked for, at
+whatever resolution is asked for, from an archive that contains everything.
+
+**The buffer rule follows from it:** a flight is only eligible to be dropped once
+the cloud has released it. Synced is not the same as finished, and the card is
+the only copy of the full-resolution original until it is.
+
+### The physical connection
+
+For the PoC: a USB-C port and the pilot's own cable, to a laptop. The pipeline
+runs there anyway and it is the shortest path to a graded flight.
+
+For the product: **USB-C straight to the phone.** A captive flip-out plug is
+worth prototyping — no cable to forget, no cable to lose — with a plain port as
+the fallback if it proves fragile. The device is already going to be handled
+every flight, so the connector is a wear item and needs to be designed as one.
+
+Wifi is the no-cable alternative: 2 GB over the Pi's 5 GHz radio is around
+10 minutes, unattended, while the pilot does the paperwork. Slower, but nothing
+to plug in. Worth offering as the fallback rather than the default, and worth
+testing both.
+
+The access point stays regardless, because it carries the jobs that must happen
+at the aircraft: the **live view for aiming** from Step 2, device status and
+storage remaining, and delivering the finished debrief back to the phone.
 
 ## When it starts recording
 
@@ -286,8 +344,9 @@ On top of the sensors chosen in Step 2:
 | 3 | Power-loss integrity | 20 hard power cuts during capture: no unbootable card, no loss beyond the frame being written |
 | 4 | Thermal | No throttling in a closed light-coloured enclosure at 45 °C ambient under full workload for 2 h, in sun |
 | 5 | Time to recording | ≤60 s from switch-on to first frame stored |
-| 6 | Offload | A full flight (~18 GB) transfers and verifies to a laptop in ≤5 min over USB-C |
-| 6b | Buffer | 10 flights fit on the card with room to spare, and the oldest is dropped, not the newest refused |
+| 6 | Sync set | ~2 GB reaches the phone and verifies in ≤2 min over USB-C, or ≤15 min over wifi |
+| 6b | Archive offload | A full ~18 GB flight transfers and verifies to a laptop in ≤5 min over USB-C |
+| 6c | Buffer | 10 flights fit on the card, and the oldest released flight is dropped — never the newest refused |
 | 7 | Draw measured | Average and peak watts logged, so the production supply can be sized from data |
 
 Criterion 7 is an output, not a gate — it is what the production power design
