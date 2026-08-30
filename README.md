@@ -170,7 +170,7 @@ An unreadable panel, or an aim check that could not run, disables `panel` and
 
 The hardware this is heading for is speced in [docs/dev-rig-bom.md](docs/dev-rig-bom.md).
 The plan for getting a physical prototype built and flown is in
-[docs/poc-build-manual.md](docs/poc-build-manual.md).
+[docs/poc-manual/](docs/poc-manual/README.md).
 
 ## Sensors: what each one is allowed to say
 
